@@ -1,0 +1,8 @@
+# dsh-soul-evolve 的 bundle patch —— 把插件挂进 DSH 配置树
+#
+# entry id 必须全局唯一且与包名一致（裸名 soul 会与其它插件冲突）。
+# name 解析包入口 src/index.js（宿主半侧 Cordis 插件）。
+
+- insert:
+    - id: dsh-soul-evolve
+      name: 'dsh-soul-evolve'

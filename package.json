@@ -1,0 +1,32 @@
+{
+  "name": "dsh-soul-evolve",
+  "version": "0.6.0",
+  "description": "人格状态与缓慢演化插件：反射弧驱动的状态层 + 六条约束的合成引擎",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client.js",
+    "./state": "./src/state.js",
+    "./reflex": "./src/reflex.js",
+    "./evolve": "./src/evolve.js",
+    "./adapter": "./src/adapter.js",
+    "./upgrade": "./src/upgrade.js",
+    "./api": "./src/api.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "client.js", "cordis.patch.yml", "README.md"],
+  "engines": { "node": ">=20" },
+  "dsh": {
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-runtime"],
+      "platform": "web"
+    },
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "scripts": {
+    "test": "node --test test/soul.test.js",
+    "verify": "node scripts/verify-plugin.mjs"
+  }
+}
