@@ -42,6 +42,7 @@ export const INITIAL_WEIGHT = {
   correction: 1.0, // 用户明确纠正 —— 满权重且不衰减
   repeat: 0.9, // 重复犯错
   preference: 0.6, // 长期偏好
+  pattern: 0.45, // 交互沉淀的推断条目 —— 低权重起步，靠重复验证坐实
   scene: 0.4, // 场景相关
 };
 
@@ -50,6 +51,7 @@ export const HALF_LIFE = {
   correction: Infinity,
   repeat: Infinity,
   preference: 90 * DAY,
+  pattern: 45 * DAY, // 推断错了会自己淡出，不需要有人来删
   scene: 30 * DAY,
 };
 
@@ -158,13 +160,34 @@ function normalizeEntry(e) {
   const category = INITIAL_WEIGHT[e.category] !== undefined ? e.category : "preference";
   const createdAt = Number(e.createdAt) || Date.now();
   const weight = Number.isFinite(Number(e.weight)) ? Number(e.weight) : INITIAL_WEIGHT[category];
-  return {
+  const out = {
     id: String(e.id || `e_${createdAt.toString(36)}_${Math.random().toString(36).slice(2, 6)}`),
     text: e.text.trim(),
     category,
     weight: Math.min(1, Math.max(0, weight)),
     lastHit: Number(e.lastHit) || createdAt,
     createdAt,
+  };
+  // 推断条目带着证据指针，重载时必须保住，否则面板上就查不了依据
+  const evidence = normalizeEvidence(e.evidence);
+  if (evidence) out.evidence = evidence;
+  if (typeof e.patternKey === "string" && e.patternKey) out.patternKey = e.patternKey;
+  return out;
+}
+
+/** 证据结构校验：只留可核查的计数与时间，多一个字段都不收 */
+export function normalizeEvidence(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const sessions = Number(raw.sessions) || 0;
+  const days = Number(raw.days) || 0;
+  const turns = Number(raw.turns) || 0;
+  if (sessions <= 0) return null;
+  return {
+    sessions,
+    days,
+    turns,
+    since: Number(raw.since) || 0,
+    until: Number(raw.until) || 0,
   };
 }
 
@@ -274,15 +297,22 @@ export const SIMILAR_THRESHOLD = 0.5;
  * 若同类别里已有高度相似的条目，视为"再次命中"：旧条目权重 +0.1，不新增。
  * @returns {{added: boolean, entry?: object, hit?: object}}
  */
-export function addEntry(card, { text, category = "preference", now = Date.now() } = {}) {
+export function addEntry(card, { text, category = "preference", now = Date.now(), evidence = null, patternKey = "" } = {}) {
   const t = validateEntryText(text);
   const cat = INITIAL_WEIGHT[category] !== undefined ? category : "preference";
+  const ev = normalizeEvidence(evidence);
   const entries = Array.isArray(card.entries) ? [...card.entries] : [];
 
   let best = null;
   let bestSim = 0;
   for (const e of entries) {
     if (e.category !== cat) continue;
+    // 同一条模式重新验证时按 key 收敛，避免措辞漂移导致重复条目
+    if (cat === "pattern" && patternKey && e.patternKey === patternKey) {
+      best = e;
+      bestSim = 1;
+      break;
+    }
     const s = similarity(e.text, t);
     if (s > bestSim) {
       bestSim = s;
@@ -296,6 +326,8 @@ export function addEntry(card, { text, category = "preference", now = Date.now()
       ...best,
       weight: Math.min(1, Math.round((best.weight + 0.1) * 100) / 100),
       lastHit: now,
+      ...(ev ? { evidence: ev } : {}),
+      ...(patternKey ? { patternKey } : {}),
     };
     return { added: false, hit: entries[idx], card: { ...card, entries } };
   }
@@ -307,6 +339,8 @@ export function addEntry(card, { text, category = "preference", now = Date.now()
     weight: INITIAL_WEIGHT[cat],
     lastHit: now,
     createdAt: now,
+    ...(ev ? { evidence: ev } : {}),
+    ...(patternKey ? { patternKey } : {}),
   };
   const next = [...entries, entry].slice(-MAX_ENTRIES);
   return { added: true, entry, card: { ...card, entries: next } };
@@ -464,6 +498,8 @@ export function cardDetail(card, now = Date.now()) {
       createdAt: e.createdAt,
       lastHit: e.lastHit,
       injected: r.injected.includes(e.id),
+      ...(e.evidence ? { evidence: e.evidence } : {}),
+      ...(e.patternKey ? { patternKey: e.patternKey } : {}),
     })),
     history: (card.history ?? []).map((h, i) => ({ index: i, at: h.at, size: h.content.length })),
     inject: { used: r.used, budget: INJECT_BUDGET, injected: r.injected.length, truncated: r.truncated.length },

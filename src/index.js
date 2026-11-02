@@ -29,7 +29,14 @@ export const name = "soul";
 export const inject = ["tools", "systemPrompt"];
 /** 注意：不要导出 Config —— 框架会对导出的 Config 调用 Config.validate()，
  *  普通对象没有该方法，会导致插件 apply 阶段 TypeError 并让整个 profile 启动失败。 */
-const DEFAULTS = { injectPrompt: true, autoUpdate: true, home: undefined, stateScope: "global" };
+const DEFAULTS = {
+  injectPrompt: true,
+  autoUpdate: true,
+  home: undefined,
+  stateScope: "global",
+  sediment: true,
+  sedimentEvery: 15,
+};
 
 let defineTool = null;
 try {
@@ -100,9 +107,10 @@ function applyInner(ctx, config = {}) {
 
   // 每轮自动更新：监听 user/message，跑反射弧把增量写进状态。
   // 这是"状态会自己变"的闭环；失败只告警，不影响会话。
+  // 顺带挂交互沉淀：每 sedimentEvery 轮把观测里反复出现的模式升级成性格条目。
   if (cfg.autoUpdate) {
     try {
-      const mounted = installAutoUpdate(ctx);
+      const mounted = installAutoUpdate(ctx, { sediment: cfg.sediment !== false, sedimentEvery: cfg.sedimentEvery });
       if (mounted === null && env.capabilities.events !== true) {
         warnings.push("ctx.on 不可用，跳过每轮自动更新");
       }

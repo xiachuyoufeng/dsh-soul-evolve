@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.0 — 2026-11-02
+
+**交互沉淀：性格从交互里长出来，不再只靠用户点名纠正**
+
+- 新增 `src/pattern.js`：把逐轮观测聚合成候选模式（场景主导 / 输入偏短 / 场景稳定 / 长会话），每条候选自带 `evidence`（会话数、天数、轮次、起止时间）
+- 新增 `src/sediment.js`：编排层，负责读观测、写卡、记账（`patterns.json`）；全局冷却 1 天、一次最多 1 条、同一 `patternKey` 冷却 14 天
+- `src/evolve.js`：新增 `qualifiesInferred()`（推断入口，带证据门槛）；`qualifies()` 明确拒绝 `pattern`，**模型无法通过 soul_evolve 自造证据写性格**
+- `src/persona.js`：新增 `pattern` 类（初始权重 0.45、半衰 45 天）、`evidence`/`patternKey` 字段与 `normalizeEvidence()`；`cardDetail` 暴露证据
+- `src/auto-update.js`：每 `sedimentEvery`（默认 15）轮真人输入跑一次沉淀，排在状态写之后，失败只告警
+- `src/api.js`：`GET /api/patterns`（只读预览）、`POST /api/patterns/sediment`（需 `x-soul-action`）
+- `client.js`：新增「交互沉淀」面板（统计 / 够格候选 / 还差几天 / 立即沉淀），条目行显示「依据 N 会话/M 轮」
+- 门槛：独立会话 ≥ 3、跨天 ≥ 3、相关轮次 ≥ 12。真实数据下只有一天时一条也不会写——这是设计，不是故障
+- 测试：新增 `test/pattern.test.js`（15 例），`npm test` 51 例全绿；verify 预检 85 项
+
 ## 1.0.0 — 2026-11-02
 
 四个层次一次落地：观测 → 场景 → 预算 → 作用域。

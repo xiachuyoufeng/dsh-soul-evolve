@@ -609,7 +609,11 @@ window.__ModuleLoader__.load({
                   h(
                     "span",
                     { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } },
-                    e.category + " · " + e.effective + (e.injected ? "" : " · 未注入")
+                    e.category +
+                      " · " +
+                      e.effective +
+                      (e.evidence ? " · 依据 " + e.evidence.sessions + " 会话/" + e.evidence.turns + " 轮" : "") +
+                      (e.injected ? "" : " · 未注入")
                   ),
                   h("span", { style: { flex: "1", fontSize: "12px", lineHeight: "1.5" } }, e.text),
                   h(
@@ -750,12 +754,136 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * 交互沉淀面板：看观测里反复出现的模式（够格的/还差的），并可手动跑一次。
+     * 自动通道每 15 轮真人输入自己跑；这里给的是"看得见 + 点一下就能催"。
+     */
+    function PatternPanel() {
+      var state = React.useState({ status: "loading", data: null, error: "", message: "" });
+      var view = state[0];
+      var setView = state[1];
+
+      var load = React.useCallback(function () {
+        api("/api/patterns")
+          .then(function (body) {
+            setView(function (prev) {
+              return { status: "ready", data: body, error: "", message: prev.message };
+            });
+          })
+          .catch(function (err) {
+            setView({ status: "error", data: null, error: (err && err.message) || String(err), message: "" });
+          });
+      }, []);
+
+      React.useEffect(function () {
+        load();
+      }, [load]);
+
+      var runSediment = function () {
+        setView(function (prev) {
+          return Object.assign({}, prev, { message: "沉淀中…" });
+        });
+        api("/api/patterns/sediment", { method: "POST" })
+          .then(function (body) {
+            var msg =
+              body.written && body.written.length > 0
+                ? "沉淀 " + body.written.length + " 条：" + body.written.map(function (w) { return w.key; }).join(", ")
+                : body.ready && body.ready.length > 0
+                ? "够格但都在冷却期，暂不重复写"
+                : "还没有够格的模式（要跨 3 个会话、3 天以上）";
+            setView({ status: "ready", data: null, error: "", message: msg });
+            load();
+          })
+          .catch(function (err) {
+            setView(function (prev) {
+              return Object.assign({}, prev, { message: "沉淀失败：" + ((err && err.message) || String(err)) });
+            });
+          });
+      };
+
+      var d = view.data;
+      var stats = (d && d.stats) || null;
+      var ready = (d && d.ready) || [];
+      var emitted = (d && d.emitted) || [];
+
+      return h(
+        "section",
+        { className: "__ds_card" },
+        h(
+          "div",
+          { className: "__ds_head" },
+          h("span", { className: "__ds_title" }, "交互沉淀"),
+          h(
+            "div",
+            { style: { display: "flex", gap: "6px" } },
+            h("button", { type: "button", className: "__ds_btn", onClick: runSediment }, "立即沉淀"),
+            h("button", { type: "button", className: "__ds_btn", onClick: load, disabled: view.status === "loading" }, "刷新")
+          )
+        ),
+        view.status === "error" ? h("span", { className: "__ds_error" }, "读取失败：" + view.error) : null,
+        stats
+          ? h(
+              "span",
+              { className: "__ds_hint" },
+              "观测 " + stats.turns + " 轮 / " + stats.sessions + " 会话 / " + stats.days + " 天 · 主场景 " + stats.topScene +
+                "（" + Math.round(stats.topSceneShare * 100) + "%）· 输入中位 " + stats.textMedian + " 字"
+            )
+          : null,
+        stats
+          ? h(
+              "span",
+              { className: "__ds_hint", style: { opacity: 0.7 } },
+              "门槛：会话 ≥ " + (d.gates ? d.gates.minSessions : 3) + "、跨天 ≥ " + (d.gates ? d.gates.minDays : 3) +
+                "、相关轮次 ≥ " + (d.gates ? d.gates.minTurns : 12) + "（跨天才算模式，单次不算）"
+            )
+          : null,
+        ready.length === 0
+          ? h("span", { className: "__ds_hint" }, "暂无可沉淀的模式。这是正常的——数据还不够天数时本来就不该出条目。")
+          : h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "3px" } },
+              ready.map(function (c) {
+                return h(
+                  "div",
+                  { key: c.key, style: { display: "flex", gap: "8px", alignItems: "center" } },
+                  h("span", { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } }, c.key),
+                  h("span", { style: { flex: "1", fontSize: "12px" } }, c.event)
+                );
+              })
+            ),
+        (d && d.blocked ? d.blocked : []).length > 0
+          ? h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+              h("span", { className: "__ds_hint" }, "快成了、还差："),
+              (d.blocked || []).map(function (b) {
+                return h(
+                  "div",
+                  { key: b.key, style: { display: "flex", gap: "8px", alignItems: "center", opacity: 0.6 } },
+                  h("span", { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } }, b.key),
+                  h("span", { style: { flex: "1", fontSize: "12px" } }, b.event + " · " + b.missing.join("、"))
+                );
+              })
+            )
+          : null,
+        emitted.length > 0
+          ? h(
+              "span",
+              { className: "__ds_hint", style: { opacity: 0.7 } },
+              "已沉淀 " + emitted.length + " 条：" + emitted.map(function (x) { return x.key; }).join(", ")
+            )
+          : null,
+        view.message ? h("span", { className: "__ds_hint" }, view.message) : null
+      );
+    }
+
     function ConfigPanel() {
       return h(
         "div",
         { className: "__ds_root", "data-dsh-soul-evolve": "config" },
         h(StatePanel, null),
         h(PersonaPanel, null),
+        h(PatternPanel, null),
         h(UpgradePanel, null)
       );
     }

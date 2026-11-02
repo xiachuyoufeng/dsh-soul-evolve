@@ -13,8 +13,11 @@ import { loadState, saveState, applyDelta, pushEvent } from "./state.js";
 import { reflexDetail } from "./reflex.js";
 import { detectScene } from "./scene.js";
 import { noteUserTurn } from "./trace.js";
+import { sediment } from "./sediment.js";
 
 const MAX_NOTE = 80;
+/** 每多少轮真人输入跑一次交互沉淀（与"事件密度优先"的触发策略一致） */
+export const SEDIMENT_EVERY = 15;
 
 /** 从 session 对象里尽量取出一个稳定 id（不同版本字段名不同） */
 export function sessionIdOf(session) {
@@ -84,11 +87,19 @@ export function isUserTurn(event) {
 
 /**
  * 挂载每轮自动更新。宿主没有 events 能力时静默跳过。
+ *
+ * 顺带挂交互沉淀：每 SEDIMENT_EVERY 轮真人输入跑一次（不是每轮，
+ * 单次交互看不出模式；沉淀失败只告警）。
+ *
  * @param {object} ctx cordis 上下文
+ * @param {object} [opts] { sediment?: boolean, sedimentEvery?: number }
  * @returns {(() => void)|null} disposer
  */
-export function installAutoUpdate(ctx) {
+export function installAutoUpdate(ctx, opts = {}) {
   if (!ctx || typeof ctx.on !== "function") return null;
+  const doSediment = opts.sediment !== false;
+  const every = Math.max(1, Number(opts.sedimentEvery) || SEDIMENT_EVERY);
+  let turns = 0;
   const attach = () =>
     ctx.on("session/event", (session, event) => {
       try {
@@ -96,6 +107,17 @@ export function installAutoUpdate(ctx) {
         const text = extractUserText(event.data?.content);
         if (!text) return;
         void updateFromUserText(text, Date.now(), sessionIdOf(session));
+        if (!doSediment) return;
+        turns += 1;
+        if (turns % every !== 0) return;
+        // 沉淀排在状态写之后：即使它失败，状态已经落盘
+        void serializeWrite(async () => {
+          const r = sediment({ now: Date.now() });
+          if (r.written.length > 0) {
+            console.log(`[dsh-soul-evolve] 交互沉淀 +${r.written.length} 条：${r.written.map((w) => w.key).join(", ")}`);
+          }
+          return r;
+        });
       } catch (err) {
         console.warn("[dsh-soul-evolve] 会话事件处理失败：", err?.message ?? err);
       }

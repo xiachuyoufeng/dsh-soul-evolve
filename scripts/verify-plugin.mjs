@@ -298,6 +298,13 @@ try {
   const traceRes = await call({ method: "GET", url: `${P}/trace?limit=5` });
   ok(traceRes.code === 200 && Array.isArray(traceRes.body.turns), `GET /trace 返回 ${traceRes.body.total} 条观测`);
 
+  /* 交互沉淀：预览只读、写入要动作头、证据能回到面板 */
+  const pats = await call({ method: "GET", url: `${P}/patterns` });
+  ok(pats.code === 200 && pats.body.stats && Array.isArray(pats.body.ready), "GET /patterns 返回统计与候选");
+  ok(typeof pats.body.gates?.minDays === "number", `沉淀门槛暴露给前端（跨天 ≥ ${pats.body.gates?.minDays}）`);
+  const patsNoHeader = await call({ method: "POST", url: `${P}/patterns/sediment` });
+  ok(patsNoHeader.code === 403, "沉淀写接口缺 x-soul-action 头被拒（CSRF）");
+
   /* 源码升级是开发通道：没配 DSH_SOUL_SOURCE 时必须干净关闭，而不是指向不存在的目录 */
   const savedSource = process.env.DSH_SOUL_SOURCE;
   delete process.env.DSH_SOUL_SOURCE;

@@ -38,6 +38,7 @@ import {
   cardDetail,
   INJECT_BUDGET,
 } from "./persona.js";
+import { listPatterns, preview, sediment } from "./sediment.js";
 
 const PREFIX = "/dsh-soul-evolve";
 
@@ -187,6 +188,22 @@ export function createHandler() {
       if (path === `${PREFIX}/api/personas/preview` && req.method === "GET") {
         // 预览"当前会注入什么"，便于排错
         return send(res, 200, { ok: true, text: renderPersonaSection(loadPersonas()) });
+      }
+      /* ---------- 交互沉淀 ---------- */
+      if (path === `${PREFIX}/api/patterns` && req.method === "GET") {
+        // 只读：现在够格的模式、被卡住的模式、以及已沉淀过的记账
+        return send(res, 200, { ok: true, ...preview(), emitted: listPatterns() });
+      }
+      if (path === `${PREFIX}/api/patterns/sediment` && req.method === "POST") {
+        requireActionHeader(req);
+        const r = sediment({ now: Date.now() });
+        return send(res, 200, {
+          ok: true,
+          written: r.written,
+          skipped: r.skipped,
+          ready: r.preview.ready,
+          stats: r.preview.stats,
+        });
       }
       if (path.startsWith(`${PREFIX}/api/personas/`) && req.method === "GET") {
         const name = decodeURIComponent(path.slice(`${PREFIX}/api/personas/`.length));

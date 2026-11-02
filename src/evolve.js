@@ -11,15 +11,37 @@ const BANNED = [
   /我(真的)?很(爱你|想你)/,
 ];
 
-/** C1：只收三类事件 */
+/**
+ * C1（明说入口）：只收模型能提供的四类事件。
+ *
+ * pattern 类被明确挡在门外：推断条目只能由 pattern.js 从观测里生成，
+ * 模型不能借 soul_evolve 自造证据给自己写性格。
+ */
 export function qualifies(event) {
   if (!event || typeof event !== "object") return false;
   const { kind, userExplicit } = event;
+  if (kind === "pattern") return false;
   if (kind === "correction" && userExplicit) return true;
   if (kind === "praise" && userExplicit) return true;
   if (kind === "repeat_mistake") return true;
   if (kind === "longterm_preference") return true;
   return false;
+}
+
+/**
+ * C1（推断入口）：只给插件自己的沉淀通道用，不暴露给工具。
+ * 证据门槛由 pattern.js 的统计保证，这里只做结构校验。
+ */
+export function qualifiesInferred(event, { minSessions = 3, minDays = 3, minTurns = 12 } = {}) {
+  if (!event || typeof event !== "object") return false;
+  if (event.kind !== "pattern") return false;
+  if (event.userExplicit === true) return false;
+  const e = event.evidence;
+  if (!e || typeof e !== "object") return false;
+  const sessions = Number(e.sessions) || 0;
+  const days = Number(e.days) || 0;
+  const turns = Number(e.turns) || 0;
+  return sessions >= minSessions && days >= minDays && turns >= minTurns;
 }
 
 /** C2 + C6：一行三段格式化 + 禁用词检查 */
