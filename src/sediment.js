@@ -6,6 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { dataDir, readTurns } from "./trace.js";
 import {
@@ -61,6 +62,42 @@ export function savePatternState(state) {
 }
 
 /**
+ * 记忆插件写下的 markdown 条目（只读，尽力而为）。
+ *
+ * 为什么要读对方：两个插件各写各的，但都在改同一份「该怎么做事」。memory 存的
+ * 是用户明说过的偏好，soul 存的是统计出来的模式——不查对方就会各写一条同义结论。
+ * 读不到（对方改布局、路径不同）就当作没有，不报错、不阻断沉淀。
+ */
+export function memoryLines() {
+  const roots = [];
+  if (process.env.DSH_MEMORIES_DIR) roots.push(process.env.DSH_MEMORIES_DIR);
+  const home = homedir();
+  roots.push(
+    join(home, "Library", "Application Support", "dsh-desktop", "harness", "memories"),
+    join(home, ".dsh", "memories"),
+    join(home, ".local", "share", "dsh-desktop", "harness", "memories")
+  );
+  const out = [];
+  for (const root of roots) {
+    for (const file of ["MEMORY.md", "USER.md", "MEMORY-archive.md", "USER-archive.md"]) {
+      let text = "";
+      try {
+        text = readFileSync(join(root, file), "utf8");
+      } catch {
+        continue;
+      }
+      for (const raw of text.split("\n")) {
+        // 去掉列表符号与自动盖上的时间戳前缀，只留内容
+        const line = raw.replace(/^[-*\s#]+/, "").replace(/^\[\d{4}-\d{2}-\d{2}\]\s*/, "").trim();
+        if (line.length >= 8) out.push({ by: `记忆 ${file}`, text: line });
+      }
+    }
+    if (out.length) break; // 找到一份就够，不跨平台重复读
+  }
+  return out;
+}
+
+/**
  * 这一条是不是已经有人写过了？
  *
  * 只做字面比较——它挡得住"把面板里的『默认短』换个说法再说一遍"，
@@ -77,6 +114,8 @@ export function coverageOf(card, c) {
     if (t.length >= 6) targets.push({ text: t, by: "面板正文" });
   }
   for (const e of card?.entries ?? []) targets.push({ text: String(e.text ?? ""), by: "已有条目" });
+  // 记忆插件那边已经写过的偏好，不再由统计重说一遍
+  for (const m of memoryLines()) targets.push(m);
   let best = { sim: 0, by: "", text: "" };
   for (const t of targets) {
     // learned 单独比一遍：有些重复就发生在这一句里，混进 next 会被拉低

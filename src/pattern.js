@@ -273,9 +273,15 @@ export function gateOf(c, gates = {}) {
   const minTurns = gates.minTurns ?? MIN_TURNS;
   const e = c?.evidence ?? {};
   const missing = [];
-  if ((Number(e.sessions) || 0) < minSessions) missing.push(`会话 ${e.sessions ?? 0}/${minSessions}`);
-  if ((Number(e.days) || 0) < minDays) missing.push(`跨天 ${e.days ?? 0}/${minDays}`);
-  if ((Number(e.turns) || 0) < minTurns) missing.push(`轮次 ${e.turns ?? 0}/${minTurns}`);
+  const have = {
+    sessions: Number(e.sessions) || 0,
+    days: Number(e.days) || 0,
+    turns: Number(e.turns) || 0,
+  };
+  // 缺口写成"还差几天"：面板上看一眼就知道还要等多久，比 1/3 好懂
+  if (have.sessions < minSessions) missing.push(`会话 ${have.sessions}/${minSessions}（还差 ${minSessions - have.sessions} 个）`);
+  if (have.days < minDays) missing.push(`跨天 ${have.days}/${minDays}（还差 ${minDays - have.days} 天）`);
+  if (have.turns < minTurns) missing.push(`轮次 ${have.turns}/${minTurns}（还差 ${minTurns - have.turns} 轮）`);
   return { ok: missing.length === 0, missing };
 }
 

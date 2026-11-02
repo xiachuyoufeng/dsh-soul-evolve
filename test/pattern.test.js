@@ -17,7 +17,7 @@ import {
 } from "../src/pattern.js";
 import { qualifies, qualifiesInferred, buildEntry, INFERRED_DIMENSIONS } from "../src/evolve.js";
 import * as P from "../src/persona.js";
-import { preview, sediment, coverageOf, patternsPath, loadPatternState, COVERED_THRESHOLD } from "../src/sediment.js";
+import { preview, sediment, coverageOf, memoryLines, patternsPath, loadPatternState, COVERED_THRESHOLD } from "../src/sediment.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -49,7 +49,10 @@ test("pattern: 只有一天时候选存在但过不了门槛（跨天才是模�
   // 候选照常算出来（面板要能显示"还差几天"），但不该有任何一条够格
   assert.equal(r.candidates.filter((c) => gateOf(c, {}).ok).length, 0);
   for (const c of r.candidates) {
-    assert.deepEqual(gateOf(c, {}).missing, ["跨天 1/3"]);
+    const { missing } = gateOf(c, {});
+    assert.equal(missing.length, 1);
+    assert.match(missing[0], /跨天 1\/3/);
+    assert.match(missing[0], /还差 2 天/, "缺口要说清还差多少");
   }
 });
 
@@ -93,6 +96,36 @@ test("pattern: 表达检测器看姿态（基调/口风/追问/反馈）", () =>
   assert.ok(keys.includes("character:steady"), "切换少应产出口风稳候选");
   assert.ok(keys.includes("character:curious"), "追问多应产出 curious");
   assert.ok(keys.includes("character:feedback"), "正面反馈多应产出 feedback");
+});
+
+test("sediment: 查重也看记忆插件的条目（两边不各写一条同义结论）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "soul-mem-"));
+  const old = process.env.DSH_MEMORIES_DIR;
+  process.env.DSH_MEMORIES_DIR = dir;
+  try {
+    writeFileSync(
+      join(dir, "USER.md"),
+      "# 用户档案\n- [2026-10-29] 用户偏好：所有思考过程与最终回复尽量用中文表述，提问用中文时推理也用中文\n",
+      "utf8"
+    );
+    const lines = memoryLines();
+    assert.ok(lines.length > 0, "应能读到记忆条目");
+    assert.ok(lines.every((l) => l.by.startsWith("记忆 ")));
+    // 时间戳前缀应被剥掉，只比内容
+    assert.ok(!/^\[/.test(lines[0].text));
+
+    const card = { content: "", entries: [] };
+    const dup = {
+      learned: "所有思考过程和最终回复尽量用中文表述",
+      next: "用中文写推理",
+    };
+    const fresh = { learned: "对方常追问为什么，结论本身不够", next: "先给机制再落结论" };
+    assert.ok(coverageOf(card, dup).sim >= COVERED_THRESHOLD, "与记忆高度重合的应判为已覆盖");
+    assert.ok(coverageOf(card, fresh).sim < COVERED_THRESHOLD, "新的不该被误杀");
+  } finally {
+    if (old === undefined) delete process.env.DSH_MEMORIES_DIR;
+    else process.env.DSH_MEMORIES_DIR = old;
+  }
 });
 
 test("persona: 覆盖查重能挡住「把面板里已有的话重说一遍」", () => {
