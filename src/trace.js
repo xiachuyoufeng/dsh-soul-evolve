@@ -43,6 +43,12 @@ export function resetTraceCache() {
   seenOrder.length = 0;
 }
 
+/** 会话 id 归一：去掉 session- 前缀，取前 8 位；空值退化为 "-" */
+export function normalizeSid(raw) {
+  const s = String(raw ?? "").replace(/^session-/, "").trim();
+  return s.slice(0, 8) || "-";
+}
+
 function dedupeKey(sid, t, textLen) {
   return `${sid}|${Math.floor(t / 1000)}|${textLen}`;
 }
@@ -81,7 +87,8 @@ function lineCountExceeded(path) {
 export function recordTurn(entry = {}) {
   try {
     const t = Number(entry.t) || Date.now();
-    const sid = String(entry.sid ?? "-").slice(0, 8) || "-";
+    // session-xxxx 去掉前缀再截断，否则所有会话都塌成 "session-"，按会话分组失效
+    const sid = normalizeSid(entry.sid);
     const textLen = Number(entry.textLen) || 0;
 
     const key = dedupeKey(sid, t, textLen);
@@ -118,7 +125,7 @@ let lastTurn = { sid: "-", textLen: 0, hits: [], at: 0, scene: null };
 
 export function noteUserTurn({ sid, textLen, hits, at, scene } = {}) {
   lastTurn = {
-    sid: String(sid ?? "-").slice(0, 8) || "-",
+    sid: normalizeSid(sid),
     textLen: Number(textLen) || 0,
     hits: Array.isArray(hits) ? hits : [],
     at: Number(at) || Date.now(),
