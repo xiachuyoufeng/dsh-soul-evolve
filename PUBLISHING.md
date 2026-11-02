@@ -4,7 +4,7 @@
 
 ## 0. 上架前必须先做的事
 
-- [ ] GitHub 仓库建好（`OWNER/dsh-soul-evolve`，公开，不要勾 Add README），把下面两处 `OWNER` 换成真实用户名：
+- [ ] GitHub 仓库建好（`Xiachu116/dsh-soul-evolve`，公开，不要勾 Add README），把下面两处 `Xiachu116` 换成真实用户名：
   - `package.json` 的 `repository` / `homepage` / `bugs`
   - `marketplace/entry.json` 的 `repo`
 - [ ] `npm login`（当前未登录）
@@ -23,7 +23,7 @@ npm publish --access public
 ## 2. 建仓并推上去
 
 ```bash
-git remote add origin https://github.com/OWNER/dsh-soul-evolve.git
+git remote add origin https://github.com/Xiachu116/dsh-soul-evolve.git
 git push -u origin main
 ```
 
