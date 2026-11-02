@@ -8,7 +8,7 @@
   - `package.json` 的 `repository` / `homepage` / `bugs`
   - `marketplace/entry.json` 的 `repo`
 - [ ] npm 发布（可选，见下）
-- [ ] 提交市场 PR（已代做，见 PR #206）
+- [ ] 提交市场 PR（精选列表 PR #11315，待审）
 - [ ] 确认 `LICENSE` 里的版权人署名要不要换（现在是 `dsh-soul-evolve contributors`）
 
 ## 1. 发 npm（可选）
@@ -37,32 +37,45 @@ git push -u origin main
 
 仓库的 topics 加上 `dsh-plugin`（市场的自动发现会扫这个 topic，PR 也能走人工）。
 
-## 3. 提市场条目
+## 3. 提市场条目（进 DSH 应用内插件市场的那一条）
 
-市场是用 [dshworks/awesome-dsh-plugins](https://github.com/dshworks/awesome-dsh-plugins) 的 `data/plugins.json` 做登记的，**不是** README，也不是单个 yml 文件。
+应用内插件市场是 [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)，它每次打开都实时拉
+`https://awesome-dsh-plugin.com/plugins.json`，那份数据来自精选列表
+[awesome-dsh-plugin/awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)。
 
-```bash
-gh repo clone dshworks/awesome-dsh-plugins
-cd awesome-dsh-plugins
-# 把 ../soul-workspace/marketplace/entry.json 的内容追加到 data/plugins.json 的 plugins 数组
-node scripts/validate.mjs
-node scripts/render.mjs
-git checkout -b add-dsh-soul-evolve
-git commit -am "Add dsh-soul-evolve"
-gh pr create
+**所以真正的入口是那个精选列表**，而且一个插件一个文件：
+
+```
+data/plugins/<owner>__<repo>.yml
 ```
 
-条目字段说明（全部已填在 `marketplace/entry.json`）：
+内容就是 `marketplace/awesome-dsh-plugin.yml`（已写好、已提 PR #11315）：
 
-| 字段 | 值 | 说明 |
+```yaml
+url: https://github.com/xiachuyoufeng/dsh-soul-evolve
+name: xiachuyoufeng/dsh-soul-evolve
+category: identity
+description:
+  en: '...'
+  zh: '...'
+```
+
+规则要点（全文见该仓库 `contributing.md`）：
+
+| 项 | 要求 | 我们 |
 |---|---|---|
-| `category` | `bundle` | 有 `dsh.bundle` 清单、以 patch 层挂载的 npm 包 |
-| `tags` | `memory`, `ui` | 功能域，最多 2 个 |
-| `verifiedAgainst` | `0.2.1-rc.3` | 本机 dsh 内核版本，实测过的 |
-| `status` | `verified` | 配套 `evidence` 必须是可核查的文件位置 |
-| `evidence` | `package.json#dsh.bundle` | 证明"确实有安装路径" |
+| `dsh.bundle` | `package.json` 必须声明，只有 `dsh.client` 会被拒 | ✅ `{"patch": "./cordis.patch.yml"}` |
+| 仓库年龄 | ≥ 1 天，CI 自动查 | 今天刚建，等 regate 自动翻绿 |
+| topic | 加 `dsh-plugin` | ✅ |
+| 描述 | 必须与代码对得上，夸大是主要打回原因 | 每条声明都注了对应文件 |
+| PR 容量 | 一个 PR 最多 3 条 | 1 条 |
+| README | 由脚本生成，**不要手改** | 没动 |
+| npm / tarball | 可选；不发就从源码装（我们无构建步骤，不需要 allowBuilds） | 未发 |
 
-`status: verified` 是**承诺**：审的人会去你的仓库翻 `package.json` 确认 `dsh.bundle` 存在。没把握就写 `unverified`（也收，只是不显示验证标记）。
+合并后网站自动重建，市场隔天就能搜到。
+
+> 补充：[dshworks/awesome-dsh-plugins](https://github.com/dshworks/awesome-dsh-plugins)（`data/plugins.json`
+> 单文件、21929 条）是另一个开放数据登记表，**不进应用内市场**。PR #206 提的是那个。
 
 ## 版本门禁（最容易被打回的一条）
 
