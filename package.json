@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "description": "人格状态与缓慢演化插件：反射弧驱动的状态层 + 场景切面 + 带权重预算的演化条目",
   "license": "MIT",
-  "author": "Xiachu116",
+  "author": "xiachuyoufeng",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Xiachu116/dsh-soul-evolve.git"
+    "url": "git+https://github.com/xiachuyoufeng/dsh-soul-evolve.git"
   },
-  "homepage": "https://github.com/Xiachu116/dsh-soul-evolve#readme",
+  "homepage": "https://github.com/xiachuyoufeng/dsh-soul-evolve#readme",
   "bugs": {
-    "url": "https://github.com/Xiachu116/dsh-soul-evolve/issues"
+    "url": "https://github.com/xiachuyoufeng/dsh-soul-evolve/issues"
   },
   "type": "module",
   "main": "src/index.js",

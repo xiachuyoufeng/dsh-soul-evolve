@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul-evolve",
-  "repo": "Xiachu116/dsh-soul-evolve",
+  "repo": "xiachuyoufeng/dsh-soul-evolve",
   "npm": "dsh-soul-evolve",
   "description": "给 dsh 加一层会自己变的状态与 Soul 面板：五维状态随对话累积衰减，按场景调整语气，人格条目带权重与 4000 字注入预算，改完下一轮生效。",
   "category": "bundle",
