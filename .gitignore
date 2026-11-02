@@ -2,3 +2,5 @@ node_modules/
 .state-demo/
 *.log
 backup/
+.gh-token
+.devicecode
