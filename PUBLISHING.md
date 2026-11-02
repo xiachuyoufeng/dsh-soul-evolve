@@ -7,16 +7,24 @@
 - [ ] GitHub 仓库建好（`xiachuyoufeng/dsh-soul-evolve`，公开，不要勾 Add README），把下面两处 `xiachuyoufeng` 换成真实用户名：
   - `package.json` 的 `repository` / `homepage` / `bugs`
   - `marketplace/entry.json` 的 `repo`
-- [ ] `npm login`（当前未登录）
-- [ ] 修 npm 缓存归属：`sudo chown -R $(id -u):$(id -g) ~/.npm`
+- [ ] npm 发布（可选，见下）
+- [ ] 提交市场 PR（已代做，见 PR #206）
 - [ ] 确认 `LICENSE` 里的版权人署名要不要换（现在是 `dsh-soul-evolve contributors`）
 
-## 1. 发 npm（市场条目用 `npm` 字段指向它）
+## 1. 发 npm（可选）
+
+不发 npm 也能上架：市场里 14965 个条目没有 `npm` 字段，安装走仓库。
+
+要发的话，在自己的终端里跑（**不用 sudo**）：
 
 ```bash
-npm pack --dry-run     # 先看打包清单：18 个文件，不该出现 test/ scripts/ docs/ backup/
-npm publish --access public
+cd ~/deepseek-harness/soul-workspace
+bash scripts/publish-npm.sh
 ```
+
+> 注意：如果是在 DSH 的沙箱里执行 npm，会报 `Your cache folder contains root-owned files`——
+> 那是沙箱挡了 `~/.npm` 写入，不是真的有 root 文件（`find ~/.npm -user root` 结果是 0 个）。
+> 在系统终端里跑就没有这个问题。
 
 包名 `dsh-soul-evolve` 在 npm 上未被占用（已查，404）。
 
