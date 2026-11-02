@@ -58,6 +58,10 @@ try {
   ok(clientText.includes("/api/upgrade"), "client.js 调用升级接口");
   ok(clientText.includes("/api/personas"), "client.js 调用 Soul 接口");
   ok(clientText.includes("x-soul-action"), "client.js 写操作带 CSRF 防护头");
+  ok(clientText.includes("/api/personas/entries"), "client.js 支持增删演化条目");
+  ok(clientText.includes("/api/personas/rollback"), "client.js 支持回滚历史版本");
+  ok(clientText.includes("超预算"), "client.js 显示注入预算占用");
+  ok(clientText.includes("SCENE_LABELS"), "client.js 显示当前场景");
 } catch {
   ok(false, "client.js 不可读");
 }
@@ -182,6 +186,119 @@ try {
   ok(existsSync(join(result.backup, "client.js")), "升级前备份了 client.js");
 } catch (err) {
   ok(false, `升级逻辑失败: ${err.message}`);
+}
+
+// 6. 观测层：turns.jsonl 写入 + 去重 + 统计脚本可用
+try {
+  const trace = await import(join(root, "src/trace.js"));
+  const modality = await import(join(root, "src/index.js"));
+  const traceFile = join(process.env.DSH_SOUL_HOME, "turns.jsonl");
+  ok(existsSync(traceFile), "观测层写入了 turns.jsonl");
+
+  const before = trace.readTurns().length;
+  // 同一次请求里渲染可能被调用多次；去重后最多只应多 1 行
+  modality.renderSoulContextWithTrace();
+  modality.renderSoulContextWithTrace();
+  const after = trace.readTurns().length;
+  ok(after - before <= 1, `重复渲染最多多记 1 行（去重生效，+${after - before}）`);
+
+  const rows = trace.readTurns();
+  const last = rows[rows.length - 1] ?? {};
+  ok(typeof last.scene === "string", `记录里带场景字段: ${last.scene}`);
+  ok(last.knobs && typeof last.knobs.warmth === "number", "记录里带调制旋钮");
+  ok(typeof last.panelLen === "number", "记录里带面板注入长度");
+
+  const statsMod = await import(join(root, "scripts/stats.mjs"));
+  const stats = statsMod.computeStats(rows);
+  const checks = statsMod.judge(stats);
+  ok(Array.isArray(checks) && checks.length === 4, `统计脚本输出 ${checks?.length} 条验收项`);
+} catch (err) {
+  ok(false, `观测层校验失败: ${err.message}`);
+}
+
+// 6b. 状态作用域：global / workspace 切换
+try {
+  const stateMod = await import(join(root, "src/state.js"));
+  stateMod.setStateScope("global");
+  const globalPath = stateMod.statePath();
+  ok(!globalPath.includes("workspaces"), `global 作用域路径: ${globalPath}`);
+  stateMod.setStateScope("workspace");
+  const wsPath = stateMod.statePath();
+  ok(wsPath.includes("workspaces"), `workspace 作用域按工作目录分桶: ${wsPath}`);
+  ok(stateMod.getStateScope() === "workspace", "作用域可读取");
+  ok(stateMod.legacyStatePath() === null || !stateMod.legacyStatePath()?.includes("dsh-soul/"), "workspace 模式不回退读旧全局状态");
+  stateMod.setStateScope("global");
+  ok(stateMod.statePath() === globalPath, "可以切回 global");
+} catch (err) {
+  ok(false, `状态作用域校验失败: ${err.message}`);
+}
+
+// 7. 后端路由端到端：Soul 面板的条目 / 回滚 / 观测接口
+try {
+  const { createHandler } = await import(join(root, "src/api.js"));
+  const handler = createHandler();
+  const call = async ({ method = "GET", url = "/", headers = {}, body = null }) => {
+    const chunks = body === null ? [] : [Buffer.from(JSON.stringify(body))];
+    const req = {
+      method,
+      url,
+      headers,
+      async *[Symbol.asyncIterator]() {
+        for (const c of chunks) yield c;
+      },
+    };
+    const res = {
+      code: 0,
+      payload: "",
+      writeHead(code) {
+        this.code = code;
+      },
+      end(payload) {
+        this.payload = payload;
+      },
+    };
+    await handler(req, res);
+    return { code: res.code, body: JSON.parse(res.payload || "{}") };
+  };
+  const H = { "x-soul-action": "1" };
+  const P = "/dsh-soul-evolve/api";
+
+  const created = await call({ method: "PUT", url: `${P}/personas`, headers: H, body: { name: "预检卡", content: "# 预检卡\n\n## Identity\n测试" } });
+  ok(created.code === 200 && created.body.ok, "PUT /personas 建卡成功");
+
+  const added = await call({ method: "POST", url: `${P}/personas/entries`, headers: H, body: { name: "预检卡", text: "用户嫌长，以后默认短说", category: "correction" } });
+  ok(added.code === 200 && added.body.added === true, "POST /personas/entries 加入条目");
+  ok(added.body.card?.inject?.budget === 4000, `注入预算暴露给前端: ${added.body.card?.inject?.budget}`);
+
+  const dup = await call({ method: "POST", url: `${P}/personas/entries`, headers: H, body: { name: "预检卡", text: "嫌长，以后默认短说", category: "correction" } });
+  ok(dup.code === 200 && dup.body.added === false, "近似条目按命中处理（不重复新增）");
+
+  const detail = await call({ method: "GET", url: `${P}/personas/${encodeURIComponent("预检卡")}` });
+  ok(detail.code === 200 && detail.body.entries.length === 1, `GET /personas/<name> 返回条目数 ${detail.body.entries?.length}`);
+  ok(detail.body.entries[0].injected === true, "条目默认在预算内（injected=true）");
+
+  const noHeader = await call({ method: "POST", url: `${P}/personas/entries`, body: { name: "预检卡", text: "无头" } });
+  ok(noHeader.code === 403, "写接口缺 x-soul-action 头被拒（CSRF）");
+
+  const rid = detail.body.entries[0].id;
+  const delEntry = await call({ method: "DELETE", url: `${P}/personas/entries?name=${encodeURIComponent("预检卡")}&id=${encodeURIComponent(rid)}`, headers: H });
+  ok(delEntry.code === 200 && delEntry.body.card.entries.length === 0, "DELETE /personas/entries 删除条目");
+
+  const hist = await call({ method: "PUT", url: `${P}/personas`, headers: H, body: { name: "预检卡", content: "# 预检卡 v2" } });
+  ok(hist.code === 200, "再次 PUT 覆盖正文");
+  const detail2 = await call({ method: "GET", url: `${P}/personas/${encodeURIComponent("预检卡")}` });
+  ok(detail2.body.history.length === 1, `历史版本数 ${detail2.body.history?.length}`);
+  const rb = await call({ method: "POST", url: `${P}/personas/rollback`, headers: H, body: { name: "预检卡", index: 0 } });
+  ok(rb.code === 200 && rb.body.card.content.includes("## Identity"), "POST /personas/rollback 回滚正文");
+
+  const traceRes = await call({ method: "GET", url: `${P}/trace?limit=5` });
+  ok(traceRes.code === 200 && Array.isArray(traceRes.body.turns), `GET /trace 返回 ${traceRes.body.total} 条观测`);
+
+  // 清掉预检建的东西
+  const { savePersonas } = await import(join(root, "src/persona.js"));
+  savePersonas({ version: 2, active: null, cards: {} });
+} catch (err) {
+  ok(false, `后端路由校验失败: ${err.message}`);
 }
 
 console.log(`\n${fails.length === 0 ? "预检通过，可以安装" : `预检失败 ${fails.length} 项，禁止安装`}`);

@@ -10,9 +10,19 @@
  * 3. 任何异常只告警，绝不影响会话本身。
  */
 import { loadState, saveState, applyDelta, pushEvent } from "./state.js";
-import { reflex } from "./reflex.js";
+import { reflexDetail } from "./reflex.js";
+import { detectScene } from "./scene.js";
+import { noteUserTurn } from "./trace.js";
 
 const MAX_NOTE = 80;
+
+/** 从 session 对象里尽量取出一个稳定 id（不同版本字段名不同） */
+export function sessionIdOf(session) {
+  if (!session) return "-";
+  const raw =
+    session.id ?? session.sessionId ?? session.key ?? session.uuid ?? session.header?.id ?? session.header?.sessionId ?? "-";
+  return String(raw);
+}
 
 /** 串行队列：所有自动更新排同一队，避免并发丢更新 */
 let chain = Promise.resolve();
@@ -38,18 +48,29 @@ export function extractUserText(content) {
 
 /**
  * 用一条用户输入更新状态。
- * @returns {Promise<{delta: object, note: string}|null>}
+ * @returns {Promise<{delta: object, note: string, scene: string}|null>}
  */
-export async function updateFromUserText(text, now = Date.now()) {
+export async function updateFromUserText(text, now = Date.now(), sid = "-") {
   const source = String(text ?? "").trim();
   if (!source) return null;
   return serializeWrite(async () => {
     let state = await loadState(now); // loadState 内部已做时间衰减
-    const delta = reflex(source, { now, lastAt: state.updatedAt });
+    const { delta, hits } = reflexDetail(source, { now, lastAt: state.updatedAt });
+
+    // 场景判定：滞回状态存在 state 里，跨轮次才有"惯性"
+    const prevScene = state.scene?.current ?? "work";
+    const prevStreak = state.scene?.streak ?? 0;
+    const sceneResult = detectScene(source, { now, prev: prevScene, streak: prevStreak });
+
     state = applyDelta(state, delta, now);
-    state = pushEvent(state, { at: now, note: source.slice(0, MAX_NOTE), delta });
+    state = {
+      ...state,
+      scene: { current: sceneResult.scene, candidate: sceneResult.candidate, streak: sceneResult.streak },
+    };
+    state = pushEvent(state, { at: now, note: source.slice(0, MAX_NOTE), delta, scene: sceneResult.scene });
+    noteUserTurn({ sid, textLen: source.length, hits, at: now, scene: sceneResult.scene });
     await saveState(state);
-    return { delta, note: source.slice(0, MAX_NOTE) };
+    return { delta, note: source.slice(0, MAX_NOTE), scene: sceneResult.scene, signals: sceneResult.signals };
   });
 }
 
@@ -74,7 +95,7 @@ export function installAutoUpdate(ctx) {
         if (!isUserTurn(event)) return;
         const text = extractUserText(event.data?.content);
         if (!text) return;
-        void updateFromUserText(text);
+        void updateFromUserText(text, Date.now(), sessionIdOf(session));
       } catch (err) {
         console.warn("[dsh-soul-evolve] 会话事件处理失败：", err?.message ?? err);
       }

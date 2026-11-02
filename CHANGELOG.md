@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.0.0 — 2026-11-02
+
+四个层次一次落地：观测 → 场景 → 预算 → 作用域。
+
+**v0.7 观测层（新增 `src/trace.js`）**
+- 每轮注入时追加一行 JSON 到 `~/.dsh-soul-evolve/turns.jsonl`：时间、会话、场景、五维状态、三个旋钮、输入长度、面板注入长度、命中规则
+- 去重按 `(会话, 秒, 输入长度)`：提示词渲染一次请求里可能被调用多次，不去重行数会翻倍
+- 超 2 MB 轮转到 `turns.1.jsonl`；任何异常静默吞掉——观测坏了也不能影响注入
+- 新增 `scripts/stats.mjs`：场景分组均值、温差、切换率、面板长度趋势、规则命中分布，以及四条验收线的 ✓/✗
+
+**v0.8 场景切面（新增 `src/scene.js`，`reflex.modulate(state, scene)`）**
+- 四场景 work / tech / support / chat，**默认 work**：判错场景比不判更糟
+- 滞回：连续两轮占优，或单轮得分 ≥ max(2, 当前场景分 × 1.5) 才切换；隔 6 小时以上连续计数清零
+- 场景偏移加在调制层而不是状态层：状态是同一份，表达才分场合
+- 副语言作为状态外显：`hesitation`（精力 < 0.35）/ `fragmented`（专注 < 0.4），状态高时为 false，就不该出现
+
+**v0.9 演化条目加权 + 注入预算（`src/persona.js` 升到 schema v2）**
+- 卡片结构变 `{ content, entries[], history[] }`；正文（手写基底）与演化条目分开
+- 权重：correction 1.0 / repeat 0.9（不衰减）、preference 0.6（90 天半衰期）、scene 0.4（30 天半衰期）
+- 写入时判重：同类别 Jaccard ≥ 0.5 视为再次命中，旧条目权重 +0.1，不新增（避免逐轮语义匹配的开销）
+- 注入硬预算 4000 字：正文优先完整保留，剩余按权重给条目；被截断的条目仍留在存储里，面板标灰「未注入」
+- 历史：`set` 覆盖正文时旧正文进历史（保留 10 版），可一键回滚
+- `soul_persona` 新增 action：`evolve`（加条目）/ `forget`（删条目）/ `history` / `rollback`
+- 新增接口：`POST/DELETE /api/personas/entries`、`POST /api/personas/rollback`、`GET /api/trace`
+
+**v1.0 状态作用域 + 主体性**
+- 配置 `stateScope: "global" | "workspace"`（默认 global）；workspace 模式按工作目录哈希分桶，项目之间状态不串味
+- 「主体性」不写成代码，落在 Soul 面板的 Boundaries（DSH 本身已有审批策略，插件重复实现只会打架）
+
+**其它**
+- 状态 schema 升到 v2（补 `scene` 字段，老文件自动迁移）
+- `soul_persona get` 现在返回条目、历史、注入占用
+- 预检 74 项、单测 35 例全过
+
 ## 0.6.0 — 2026-10-30
 
 改名：人设卡 → **Soul 面板**。

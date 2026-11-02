@@ -6,8 +6,43 @@ import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
+
+/* ---------------- 状态作用域 ---------------- */
+
+/**
+ * global（默认）：跨项目同一份状态，人格连续。
+ * workspace：每个工作目录一份状态，项目之间互不串味。
+ *
+ * 做成可切换而不是二选一，是因为两种诉求都真：跨项目身份连续要 global，
+ * 但同时跑几个不相干的活时，情绪被别的项目牵动又很怪。
+ */
+let scopeMode = "global";
+
+export function setStateScope(mode) {
+  const next = mode === "workspace" ? "workspace" : "global";
+  scopeMode = next;
+  return next;
+}
+
+export function getStateScope() {
+  return scopeMode;
+}
+
+export function baseDir() {
+  return process.env.DSH_SOUL_HOME || join(homedir(), ".dsh-soul-evolve");
+}
+
+/** 状态实际所在目录（workspace 模式下按 cwd 哈希分桶） */
+export function scopeDir() {
+  const base = baseDir();
+  if (scopeMode !== "workspace") return base;
+  const cwd = process.cwd();
+  const hash = createHash("sha1").update(cwd).digest("hex").slice(0, 8);
+  return join(base, "workspaces", hash);
+}
 
 export function defaultState(now = Date.now()) {
   return {
@@ -16,6 +51,8 @@ export function defaultState(now = Date.now()) {
     energy: 0.6,
     intimacy: 0.1,
     focus: 0.5,
+    /** 场景状态：当前场景 + 滞回用的连续占优计数（v0.8 起） */
+    scene: { current: "work", candidate: null, streak: 0 },
     updatedAt: now,
     events: [],
     milestones: [],
@@ -23,20 +60,24 @@ export function defaultState(now = Date.now()) {
 }
 
 export function statePath() {
-  const base = process.env.DSH_SOUL_HOME || join(homedir(), ".dsh-soul-evolve");
-  return join(base, "state.json");
+  return join(scopeDir(), "state.json");
 }
 
 /** 改名前的旧状态路径（0.3.0 及以前叫 dsh-soul）；只在未显式指定 DSH_SOUL_HOME 时回退读取 */
 export function legacyStatePath() {
   if (process.env.DSH_SOUL_HOME) return null;
+  // workspace 模式下不读全局旧文件，避免把别的项目的状态当成这个项目的
+  if (scopeMode === "workspace") return null;
   return join(homedir(), ".dsh-soul", "state.json");
 }
 
 /** 时间衰减：不聊会淡，情绪回中位；亲密不倒退 */
 export function decay(state, now = Date.now(), tauMs = 1000 * 60 * 60 * 12) {
   const elapsed = Math.max(0, now - state.updatedAt);
-  if (elapsed < 60_000) return { ...state, updatedAt: now };
+  // 隔了 6 小时以上不再算"同一段连续对话"，场景滞回的连续计数清零
+  const sceneBase =
+    state.scene && elapsed > 6 * 60 * 60 * 1000 ? { ...state.scene, streak: 0, candidate: null } : state.scene;
+  if (elapsed < 60_000) return { ...state, scene: sceneBase, updatedAt: now };
   const k = Math.exp(-elapsed / tauMs);
   const pull = (v, target) => target + (v - target) * k;
   return {
@@ -45,6 +86,7 @@ export function decay(state, now = Date.now(), tauMs = 1000 * 60 * 60 * 12) {
     energy: pull(state.energy, 0.65),
     focus: pull(state.focus, 0.5),
     intimacy: state.intimacy,
+    scene: sceneBase,
     updatedAt: now,
   };
 }
@@ -74,6 +116,10 @@ export function migrate(raw) {
   if (!raw || typeof raw !== "object") return defaultState();
   let s = { ...raw };
   if (!s.version || s.version < 1) s = { ...defaultState(), ...s, version: 1 };
+  if (s.version < 2) {
+    // v1 → v2：补场景状态；老文件没有 scene，一律从默认 work 起
+    s = { ...s, version: 2, scene: s.scene && typeof s.scene === "object" ? s.scene : defaultState().scene };
+  }
   if (s.version > STATE_VERSION) {
     throw new Error(`state version ${s.version} 高于插件支持的 ${STATE_VERSION}`);
   }

@@ -20,8 +20,9 @@
  */
 import { URL } from "node:url";
 import { syncFromSource, readInfo, sourceDir, INSTALL_DIR } from "./upgrade.js";
-import { saveState, applyDelta, readStateSync } from "./state.js";
+import { saveState, applyDelta, readStateSync, getStateScope, scopeDir } from "./state.js";
 import { modulate, describe } from "./reflex.js";
+import { readTurns } from "./trace.js";
 import {
   loadPersonas,
   savePersonas,
@@ -31,6 +32,11 @@ import {
   listPersonas,
   renderPersonaSection,
   validateName,
+  addEntry,
+  removeEntry,
+  rollbackPersona,
+  cardDetail,
+  INJECT_BUDGET,
 } from "./persona.js";
 
 const PREFIX = "/dsh-soul-evolve";
@@ -67,8 +73,11 @@ function stateView() {
   return {
     ok: true,
     state,
-    modulation: modulate(state),
+    modulation: modulate(state, state.scene?.current ?? null),
     label: describe(state),
+    scene: state.scene?.current ?? "work",
+    stateScope: getStateScope(),
+    stateDir: scopeDir(),
   };
 }
 
@@ -84,6 +93,8 @@ export function createHandler() {
           installed: readInfo(INSTALL_DIR),
           source: readInfo(sourceDir()),
           sourceDir: sourceDir(),
+          stateScope: getStateScope(),
+          stateDir: scopeDir(),
         });
       }
       if (req.method === "POST" && path === `${PREFIX}/api/upgrade`) {
@@ -119,7 +130,7 @@ export function createHandler() {
       /* ---------- Soul ---------- */
       if (path === `${PREFIX}/api/personas` && req.method === "GET") {
         const doc = loadPersonas();
-        return send(res, 200, { ok: true, active: doc.active, cards: listPersonas(doc) });
+        return send(res, 200, { ok: true, active: doc.active, cards: listPersonas(doc), budget: INJECT_BUDGET });
       }
       if (path === `${PREFIX}/api/personas` && req.method === "PUT") {
         requireActionHeader(req);
@@ -135,12 +146,52 @@ export function createHandler() {
         savePersonas(doc);
         return send(res, 200, { ok: true, active: doc.active, cards: listPersonas(doc) });
       }
+      if (path === `${PREFIX}/api/personas/entries` && req.method === "POST") {
+        requireActionHeader(req);
+        const body = await readJson(req);
+        const doc = loadPersonas();
+        const name = String(body?.name ?? doc.active ?? "").trim();
+        const card = doc.cards[name];
+        if (!card) return send(res, 404, { ok: false, error: `没有 Soul 面板「${name}」` });
+        const result = addEntry(card, { text: body?.text, category: body?.category });
+        savePersonas({ ...doc, cards: { ...doc.cards, [name]: result.card } });
+        return send(res, 200, {
+          ok: true,
+          added: result.added,
+          name,
+          card: cardDetail(result.card),
+        });
+      }
+      if (path === `${PREFIX}/api/personas/entries` && req.method === "DELETE") {
+        requireActionHeader(req);
+        const doc = loadPersonas();
+        const name = String(url.searchParams.get("name") ?? doc.active ?? "").trim();
+        const card = doc.cards[name];
+        if (!card) return send(res, 404, { ok: false, error: `没有 Soul 面板「${name}」` });
+        const nextCard = removeEntry(card, String(url.searchParams.get("id") ?? ""));
+        savePersonas({ ...doc, cards: { ...doc.cards, [name]: nextCard } });
+        return send(res, 200, { ok: true, name, card: cardDetail(nextCard) });
+      }
+      if (path === `${PREFIX}/api/personas/rollback` && req.method === "POST") {
+        requireActionHeader(req);
+        const body = await readJson(req);
+        const doc = loadPersonas();
+        const name = String(body?.name ?? doc.active ?? "").trim();
+        const idx = Number.isFinite(Number(body?.index)) ? Number(body.index) : -1;
+        const next = rollbackPersona(doc, name, idx);
+        savePersonas(next);
+        return send(res, 200, { ok: true, name, card: cardDetail(next.cards[name]), cards: listPersonas(next) });
+      }
+      if (path === `${PREFIX}/api/personas/preview` && req.method === "GET") {
+        // 预览"当前会注入什么"，便于排错
+        return send(res, 200, { ok: true, text: renderPersonaSection(loadPersonas()) });
+      }
       if (path.startsWith(`${PREFIX}/api/personas/`) && req.method === "GET") {
         const name = decodeURIComponent(path.slice(`${PREFIX}/api/personas/`.length));
         const doc = loadPersonas();
         const card = doc.cards[name];
         if (!card) return send(res, 404, { ok: false, error: `没有 Soul 面板「${name}」` });
-        return send(res, 200, { ok: true, name, content: card.content, active: doc.active === name });
+        return send(res, 200, { ok: true, name, active: doc.active === name, ...cardDetail(card) });
       }
       if (path === `${PREFIX}/api/personas` && req.method === "DELETE") {
         requireActionHeader(req);
@@ -149,9 +200,12 @@ export function createHandler() {
         savePersonas(doc);
         return send(res, 200, { ok: true, active: doc.active, cards: listPersonas(doc) });
       }
-      if (path === `${PREFIX}/api/personas/preview` && req.method === "GET") {
-        // 预览"当前会注入什么"，便于排错
-        return send(res, 200, { ok: true, text: renderPersonaSection(loadPersonas()) });
+
+      /* ---------- 观测 ---------- */
+      if (path === `${PREFIX}/api/trace` && req.method === "GET") {
+        const all = readTurns();
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 200), 1), 1000);
+        return send(res, 200, { ok: true, total: all.length, turns: all.slice(-limit) });
       }
 
       return send(res, 404, { ok: false, error: "not found" });

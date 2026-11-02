@@ -91,6 +91,8 @@ window.__ModuleLoader__.load({
       return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
     }
 
+    var SCENE_LABELS = { work: "工作", chat: "闲聊", support: "情绪支持", tech: "技术求助" };
+
     function Metric(props) {
       var value = Math.max(0, Math.min(1, Number(props.value) || 0));
       var display = props.signed ? (value > 0 ? "+" : "") + value.toFixed(2) : value.toFixed(2);
@@ -171,7 +173,9 @@ window.__ModuleLoader__.load({
                   "、温度≈" +
                   (mod ? mod.warmth : "—") +
                   "、耐心≈" +
-                  (mod ? mod.patience : "—")
+                  (mod ? mod.patience : "—") +
+                  "　场景：" +
+                  (SCENE_LABELS[(view.data && view.data.scene) || "work"] || "工作")
               ),
               recent.length > 0
                 ? h(
@@ -187,7 +191,14 @@ window.__ModuleLoader__.load({
                     })
                   )
                 : h("span", { className: "__ds_hint" }, "还没有事件——发一条消息后会自动记录"),
-              h("span", { className: "__ds_hint" }, "状态由真人消息自动累积；改动在下一轮请求组装时生效。")
+              h(
+                "span",
+                { className: "__ds_hint" },
+                "状态由真人消息自动累积；改动在下一轮请求组装时生效。" +
+                  (view.data && view.data.stateScope
+                    ? "　作用域：" + (view.data.stateScope === "workspace" ? "每工作目录独立" : "全局共享")
+                    : "")
+              )
             )
           : null
       );
@@ -207,6 +218,12 @@ window.__ModuleLoader__.load({
       var busy = React.useState(false);
       var isBusy = busy[0];
       var setBusy = busy[1];
+      var detailState = React.useState({ entries: [], history: [], inject: null });
+      var detail = detailState[0];
+      var setDetail = detailState[1];
+      var entryDraft = React.useState({ text: "", category: "preference" });
+      var ed = entryDraft[0];
+      var setEntryDraft = entryDraft[1];
 
       var setErr = function (message) {
         setView(function (prev) {
@@ -217,6 +234,17 @@ window.__ModuleLoader__.load({
         setView(function (prev) {
           return Object.assign({}, prev, { notice: message, error: "" });
         });
+      };
+
+      var applyCardDetail = function (body) {
+        setDetail({
+          entries: body.entries || [],
+          history: body.history || [],
+          inject: body.inject || null,
+        });
+        if (Array.isArray(body.history)) {
+          /* history 里只有摘要，正文按需回滚 */
+        }
       };
 
       var refresh = React.useCallback(function () {
@@ -233,15 +261,41 @@ window.__ModuleLoader__.load({
         refresh();
       }, [refresh]);
 
+      var loadDetail = function (name) {
+        if (!name) return;
+        api("/api/personas/" + encodeURIComponent(name))
+          .then(function (body) {
+            applyCardDetail(body);
+          })
+          .catch(function () {
+            /* 详情读不到不影响编辑正文 */
+          });
+      };
+
       var pick = function (name) {
         if (!name) {
           setDraft({ name: "", content: "" });
+          setDetail({ entries: [], history: [], inject: null });
           return;
         }
         api("/api/personas/" + encodeURIComponent(name))
           .then(function (body) {
             setDraft({ name: body.name, content: body.content });
+            applyCardDetail(body);
             setNotice("已载入「" + body.name + "」");
+          })
+          .catch(function (err) {
+            setErr(err.message || String(err));
+          });
+      };
+
+      var reloadCard = function (name, message) {
+        refresh();
+        if (!name) return;
+        api("/api/personas/" + encodeURIComponent(name))
+          .then(function (body) {
+            applyCardDetail(body);
+            if (message) setNotice(message);
           })
           .catch(function (err) {
             setErr(err.message || String(err));
@@ -258,6 +312,69 @@ window.__ModuleLoader__.load({
         api("/api/personas", { method: "PUT", body: { name: name, content: d.content } })
           .then(function (body) {
             setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已保存「" + name + "」" });
+            reloadCard(name, "已保存「" + name + "」（旧正文已进历史）");
+          })
+          .catch(function (err) {
+            setErr(err.message || String(err));
+          })
+          .then(function () {
+            setBusy(false);
+          });
+      };
+
+      var addEntry = function () {
+        var name = (d.name || "").trim();
+        var text = (ed.text || "").trim();
+        if (!name) {
+          setErr("先选择一个 Soul 面板");
+          return;
+        }
+        if (!text) {
+          setErr("演化条目不能为空");
+          return;
+        }
+        setBusy(true);
+        api("/api/personas/entries", { method: "POST", body: { name: name, text: text, category: ed.category } })
+          .then(function (body) {
+            setEntryDraft({ text: "", category: ed.category });
+            applyCardDetail(body.card || {});
+            refresh();
+            setNotice(body.added ? "已加入一条演化条目" : "已有近似条目，按命中处理（权重 +0.1）");
+          })
+          .catch(function (err) {
+            setErr(err.message || String(err));
+          })
+          .then(function () {
+            setBusy(false);
+          });
+      };
+
+      var forgetEntry = function (id) {
+        if (typeof window !== "undefined" && !window.confirm("删除这条演化条目？")) return;
+        setBusy(true);
+        api("/api/personas/entries?name=" + encodeURIComponent(d.name) + "&id=" + encodeURIComponent(id), { method: "DELETE" })
+          .then(function (body) {
+            applyCardDetail(body.card || {});
+            refresh();
+            setNotice("已删除条目");
+          })
+          .catch(function (err) {
+            setErr(err.message || String(err));
+          })
+          .then(function () {
+            setBusy(false);
+          });
+      };
+
+      var rollback = function (index) {
+        if (typeof window !== "undefined" && !window.confirm("回滚到这个历史版本？（当前正文也会进历史，可再退回）")) return;
+        setBusy(true);
+        api("/api/personas/rollback", { method: "POST", body: { name: d.name, index: index } })
+          .then(function (body) {
+            setDraft({ name: d.name, content: (body.card && body.card.content) || "" });
+            applyCardDetail(body.card || {});
+            refresh();
+            setNotice("已回滚");
           })
           .catch(function (err) {
             setErr(err.message || String(err));
@@ -269,8 +386,20 @@ window.__ModuleLoader__.load({
 
       var create = function () {
         setDraft({ name: "", content: "" });
+        setDetail({ entries: [], history: [], inject: null });
         setNotice("已清空草稿，填好名字和正文后点「保存」");
       };
+
+      /* 首次进来自动载入当前激活的 Soul 面板，省一次点击 */
+      React.useEffect(function () {
+        api("/api/personas")
+          .then(function (body) {
+            if (body.active) pick(body.active);
+          })
+          .catch(function () {
+            /* 读不到就算了，用户可以手选 */
+          });
+      }, []);
 
       var remove = function () {
         var name = (d.name || "").trim();
@@ -281,6 +410,7 @@ window.__ModuleLoader__.load({
           .then(function (body) {
             setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已删除「" + name + "」" });
             setDraft({ name: "", content: "" });
+            setDetail({ entries: [], history: [], inject: null });
           })
           .catch(function (err) {
             setErr(err.message || String(err));
@@ -297,6 +427,7 @@ window.__ModuleLoader__.load({
         api("/api/personas/active", { method: "PUT", body: { name: name } })
           .then(function (body) {
             setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已激活「" + name + "」" });
+            reloadCard(name);
           })
           .catch(function (err) {
             setErr(err.message || String(err));
@@ -414,6 +545,113 @@ window.__ModuleLoader__.load({
             setDraft(Object.assign({}, d, { content: event.target.value }));
           },
         }),
+
+        /* ---- 演化条目：带权重，按预算注入 ---- */
+        h(
+          "div",
+          { className: "__ds_head" },
+          h("span", { className: "__ds_title", style: { fontSize: "13px" } }, "Evolved 演化条目"),
+          detail.inject
+            ? h(
+                "span",
+                { className: "__ds_hint" },
+                "注入 " + detail.inject.used + "/" + detail.inject.budget + " 字 · 生效 " +
+                  detail.inject.injected + " 条 · 超预算 " + detail.inject.truncated + " 条"
+              )
+            : null
+        ),
+        h(
+          "div",
+          { className: "__ds_row" },
+          h("input", {
+            className: "__ds_input",
+            placeholder: "新增一条演化条目（一句话）",
+            value: ed.text,
+            onChange: function (event) {
+              setEntryDraft(Object.assign({}, ed, { text: event.target.value }));
+            },
+          }),
+          h(
+            "select",
+            {
+              className: "__ds_input __ds_select",
+              style: { width: "150px" },
+              value: ed.category,
+              onChange: function (event) {
+                setEntryDraft(Object.assign({}, ed, { category: event.target.value }));
+              },
+            },
+            h("option", { value: "correction" }, "纠正（不衰减）"),
+            h("option", { value: "repeat" }, "重复犯错"),
+            h("option", { value: "preference" }, "长期偏好"),
+            h("option", { value: "scene" }, "场景相关")
+          ),
+          h("button", { type: "button", className: "__ds_btn", onClick: addEntry, disabled: isBusy || !ed.text }, "加入")
+        ),
+        (detail.entries || []).length === 0
+          ? h("span", { className: "__ds_hint" }, "还没有演化条目。soul_evolve 产出的条目会写到这里。")
+          : h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "3px" } },
+              detail.entries.map(function (e) {
+                return h(
+                  "div",
+                  {
+                    key: e.id,
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      opacity: e.injected ? 1 : 0.45,
+                      padding: "2px 0",
+                    },
+                  },
+                  h(
+                    "span",
+                    { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } },
+                    e.category + " · " + e.effective + (e.injected ? "" : " · 未注入")
+                  ),
+                  h("span", { style: { flex: "1", fontSize: "12px", lineHeight: "1.5" } }, e.text),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      className: "__ds_btn",
+                      onClick: function () {
+                        forgetEntry(e.id);
+                      },
+                      disabled: isBusy,
+                    },
+                    "删"
+                  )
+                );
+              })
+            ),
+
+        /* ---- 历史版本 ---- */
+        (detail.history || []).length
+          ? h(
+              "div",
+              { className: "__ds_row", style: { flexWrap: "wrap" } },
+              h("span", { className: "__ds_hint" }, "历史：" + detail.history.length + " 版"),
+              detail.history.map(function (hi) {
+                return h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "__ds_btn",
+                    key: "h" + hi.index,
+                    disabled: isBusy,
+                    onClick: function () {
+                      rollback(hi.index);
+                    },
+                    title: "回滚到这一版",
+                  },
+                  "#" + hi.index + " " + fmtTime(hi.at)
+                );
+              })
+            )
+          : null,
         h(
           "div",
           { className: "__ds_row" },

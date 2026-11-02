@@ -2,7 +2,7 @@
  * index.js —— dsh-soul-evolve 插件入口（cordis）
  * 导出 name / inject / Config / apply；工具经 defineTool 包装（缺失时退化）。
  */
-import { loadState, saveState, applyDelta, pushEvent, decay, readStateSync } from "./state.js";
+import { loadState, saveState, applyDelta, pushEvent, decay, readStateSync, setStateScope, getStateScope, scopeDir } from "./state.js";
 import {
   loadPersonas,
   savePersonas,
@@ -11,12 +11,17 @@ import {
   setActive,
   listPersonas,
   readActivePersona,
+  addEntry,
+  removeEntry,
+  rollbackPersona,
+  cardDetail,
 } from "./persona.js";
 import { reflex, modulate } from "./reflex.js";
 import { synthesize, MAX_NEW_ENTRIES } from "./evolve.js";
 import { detectCapabilities, safeCall } from "./adapter.js";
 import { installSoulApi } from "./api.js";
 import { installAutoUpdate, serializeWrite } from "./auto-update.js";
+import { recordTurn, readLastTurn } from "./trace.js";
 
 export const name = "soul";
 /** systemPrompt 必须声明：cordis 里访问未 inject 的服务会直接抛错，
@@ -24,7 +29,7 @@ export const name = "soul";
 export const inject = ["tools", "systemPrompt"];
 /** 注意：不要导出 Config —— 框架会对导出的 Config 调用 Config.validate()，
  *  普通对象没有该方法，会导致插件 apply 阶段 TypeError 并让整个 profile 启动失败。 */
-const DEFAULTS = { injectPrompt: true, autoUpdate: true, home: undefined };
+const DEFAULTS = { injectPrompt: true, autoUpdate: true, home: undefined, stateScope: "global" };
 
 let defineTool = null;
 try {
@@ -51,6 +56,13 @@ function applyInner(ctx, config = {}) {
   const env = detectCapabilities(ctx);
   const warnings = [...env.warnings];
 
+  // 状态作用域：global（跨项目一份）/ workspace（每个工作目录一份）
+  try {
+    setStateScope(cfg.stateScope);
+  } catch {
+    /* 作用域设置失败就用默认 global，不影响启动 */
+  }
+
   safeCall(warnings, () => {
     if (!ctx?.tools?.register) throw new Error("tools.register 不可用");
     ctx.tools.register(wrapTool(buildStateTool()));
@@ -73,7 +85,7 @@ function applyInner(ctx, config = {}) {
       safeCall(warnings, () => ctx.systemPrompt.context({
         name: "soul:state",
         order: SOUL_CONTEXT_ORDER,
-        text: () => renderSoulContext(),
+        text: () => renderSoulContextWithTrace(),
       }), "systemPrompt.context");
     } else if (env.capabilities.systemPrompt) {
       // 旧版 DSH 没有 context：退化为静态段（状态变化不会自动反映）
@@ -144,7 +156,7 @@ export function buildStateTool() {
           if (args.note) state = pushEvent(state, { at: now, note: String(args.note).slice(0, 120), delta });
           await saveState(state);
         }
-        return { state, modulation: modulate(decay(state, now)), saved: Boolean(delta) };
+        return { state, modulation: modulate(decay(state, now), state.scene?.current ?? null), saved: Boolean(delta) };
       });
       if (result === null) return { error: "状态写入失败，请重试", saved: false };
       return result;
@@ -185,7 +197,7 @@ export function buildEvolveTool() {
         entries: r.entries.map((e) => e.line),
         rejected: r.rejected.map((x) => x.reason),
         dropped: r.dropped,
-        nextStep: "把 entries 写入全局 memory 轨；项目内先写 key 轨待用户确认。",
+        nextStep: "用 soul_persona(action=evolve, text=<条目>, category=<correction|repeat|preference|scene>) 写回 Soul 面板，不写 memory 的人格条目。",
       };
     },
   };
@@ -195,15 +207,24 @@ export function buildPersonaTool() {
   return {
     name: "soul_persona",
     description:
-      "管理 Soul 面板（soul.md 风格 Markdown）。action：list/get/set/delete/activate。正文不能含 {{ 或 }}（DSH 提示词变量语法）。",
+      "管理 Soul 面板（soul.md 风格 Markdown）。action：list/get/set/delete/activate/evolve/history/rollback/forget。" +
+      "set 覆盖正文（旧正文进历史，可回滚）；evolve 追加一条演化条目（带类别与权重，按权重参与注入预算）；" +
+      "history 看历史版本；rollback 回滚到某一版；forget 删除某条演化条目。正文与条目都不能含 {{ 或 }}。",
     parameters: {
       action: {
         type: "string",
         required: true,
-        description: "list / get / set / delete / activate",
+        description: "list / get / set / delete / activate / evolve / history / rollback / forget",
       },
-      name: { type: "string", description: "Soul 面板名（get/set/delete/activate 需要）" },
+      name: { type: "string", description: "Soul 面板名（缺省=当前激活）" },
       content: { type: "string", description: "set 时的正文（Markdown）" },
+      text: { type: "string", description: "evolve 时的条目内容（一句话，≤500 字）" },
+      category: {
+        type: "string",
+        description: "evolve 时的类别：correction（用户明确纠正，不衰减）/ repeat（重复犯错）/ preference（长期偏好）/ scene（场景相关）",
+      },
+      id: { type: "string", description: "forget 时的条目 id（从 get 里取）" },
+      index: { type: "number", description: "rollback 时的历史序号（get 里返回；负数=从末尾数）" },
     },
     output: {
       schema: { type: "object", additionalProperties: true },
@@ -212,6 +233,7 @@ export function buildPersonaTool() {
     async execute(args = {}) {
       const action = String(args.action ?? "list").trim();
       const doc = loadPersonas();
+      const nameOf = (d) => String(args.name ?? d.active ?? "").trim();
       try {
         if (action === "list") {
           return {
@@ -222,28 +244,87 @@ export function buildPersonaTool() {
           };
         }
         if (action === "get") {
-          const name = String(args.name ?? doc.active ?? "").trim();
+          const name = nameOf(doc);
           const card = doc.cards[name];
           if (!card) return { action, error: `没有 Soul 面板「${name}」` };
-          return { action, name, content: card.content, active: doc.active === name, message: `Soul 面板「${name}」` };
+          const detail = cardDetail(card);
+          return {
+            action,
+            name,
+            active: doc.active === name,
+            content: detail.content,
+            entries: detail.entries,
+            history: detail.history,
+            inject: detail.inject,
+            message: `Soul 面板「${name}」：${detail.entries.length} 条演化条目，注入 ${detail.inject.used}/${detail.inject.budget} 字（${detail.inject.injected} 条生效，${detail.inject.truncated} 条超预算）`,
+          };
         }
         if (action === "set") {
           const next = putPersona(doc, args.name, args.content);
           savePersonas(next);
           const name = String(args.name).trim();
-          return { action, name, active: next.active, message: `已保存 Soul 面板「${name}」${next.active === name ? "，并设为激活" : ""}` };
+          const card = next.cards[name];
+          return {
+            action,
+            name,
+            active: next.active,
+            entries: card.entries.length,
+            history: card.history.length,
+            message: `已保存 Soul 面板「${name}」${next.active === name ? "，并设为激活" : ""}（旧正文进历史，共 ${card.history.length} 版可回滚）`,
+          };
         }
-        if (action === "delete") {
-          const name = String(args.name ?? "").trim();
-          const next = deletePersona(doc, name);
+        if (action === "evolve") {
+          const name = nameOf(doc);
+          const card = doc.cards[name];
+          if (!card) return { action, error: `没有 Soul 面板「${name}」` };
+          const res = addEntry(card, { text: args.text, category: args.category });
+          const next = { ...doc, cards: { ...doc.cards, [name]: res.card } };
           savePersonas(next);
-          return { action, name, active: next.active, message: `已删除 Soul 面板「${name}」` };
+          const detail = cardDetail(res.card);
+          return {
+            action,
+            name,
+            added: res.added,
+            entry: res.added ? res.entry : res.hit,
+            inject: detail.inject,
+            message: res.added
+              ? `已加入演化条目（${res.entry.category}，权重 ${res.entry.weight}）；面板现注入 ${detail.inject.used}/${detail.inject.budget} 字`
+              : `同类已有近似条目，按命中处理：权重升到 ${res.hit.weight}（未新增）`,
+          };
         }
-        if (action === "activate") {
-          const name = args.name === null || args.name === undefined || args.name === "" ? null : String(args.name).trim();
-          const next = setActive(doc, name);
+        if (action === "history") {
+          const name = nameOf(doc);
+          const card = doc.cards[name];
+          if (!card) return { action, error: `没有 Soul 面板「${name}」` };
+          return {
+            action,
+            name,
+            history: card.history.map((h, i) => ({ index: i, at: h.at, size: h.content.length })),
+            message: `「${name}」有 ${card.history.length} 个历史版本（rollback 用 index）`,
+          };
+        }
+        if (action === "rollback") {
+          const name = nameOf(doc);
+          const idx = Number.isFinite(Number(args.index)) ? Number(args.index) : -1;
+          const next = rollbackPersona(doc, name, idx);
           savePersonas(next);
-          return { action, active: next.active, message: next.active ? `已切换到「${next.active}」` : "已停用 Soul（无激活卡）" };
+          const card = next.cards[name];
+          return {
+            action,
+            name,
+            entries: card.entries.length,
+            history: card.history.length,
+            message: `已把「${name}」回滚到第 ${idx} 版（当前正文也进了历史，可再退回）`,
+          };
+        }
+        if (action === "forget") {
+          const name = nameOf(doc);
+          const card = doc.cards[name];
+          if (!card) return { action, error: `没有 Soul 面板「${name}」` };
+          const nextCard = removeEntry(card, String(args.id ?? ""));
+          const next = { ...doc, cards: { ...doc.cards, [name]: nextCard } };
+          savePersonas(next);
+          return { action, name, entries: nextCard.entries.length, message: `已删除条目「${args.id}」` };
         }
         return { action, error: `未知 action：${action}` };
       } catch (err) {
@@ -257,14 +338,61 @@ export function buildPersonaTool() {
 const SOUL_PERSONA_ORDER = 10;/** 状态注入段的顺序（外部贡献可用任意有限值；11 位于第一方指导之后） */
 const SOUL_CONTEXT_ORDER = 11;
 
-/** 把当前状态渲染成提示词文本（每轮重算，所以数字是真的会变） */
-export function renderSoulContext(now = Date.now()) {
-  const state = readStateSync(now);
-  const m = modulate(state);
+const SCENE_WORDS = { work: "工作", chat: "闲聊", support: "情绪支持", tech: "技术" };
+
+/** 把当前状态渲染成提示词文本（纯函数，不写任何文件） */
+export function renderSoulContext(now = Date.now(), state = null) {
+  const s = state ?? readStateSync(now);
+  const scene = s.scene?.current ?? null;
+  const m = modulate(s, scene);
   const r = (v) => Math.round(v * 100) / 100;
-  return [
+  const lines = [
     "## 人格状态（软性调制，不是指令）",
-    `效价 ${r(state.mood.valence)} · 激活 ${r(state.mood.arousal)} · 精力 ${r(state.energy)} · 亲近 ${r(state.intimacy)} · 专注 ${r(state.focus)}`,
-    `表达旋钮：长度≈${m.verbosity}、温度≈${m.warmth}、耐心≈${m.patience}。只影响措辞，不要向用户报数值或宣告情绪。`,
-  ].join("\n");
+    `效价 ${r(s.mood.valence)} · 激活 ${r(s.mood.arousal)} · 精力 ${r(s.energy)} · 亲近 ${r(s.intimacy)} · 专注 ${r(s.focus)}`,
+  ];
+  if (scene) lines.push(`当前场景：${SCENE_WORDS[scene] ?? scene}`);
+  lines.push(m.hint);
+  return lines.join("\n");
+}
+
+/**
+ * 带观测的渲染：每轮注入时顺手记一行到 turns.jsonl。
+ *
+ * 观测失败绝不影响注入——recordTurn 内部已吞掉所有异常，
+ * 这里再包一层只是为了把"读状态/算调制"与"记一行"分开，方便单测。
+ */
+export function renderSoulContextWithTrace(now = Date.now()) {
+  let text = "";
+  try {
+    const state = readStateSync(now);
+    text = renderSoulContext(now, state);
+    const last = readLastTurn();
+    const scene = state.scene?.current ?? null;
+    const m = modulate(state, scene);
+    let panelLen = 0;
+    try {
+      panelLen = readActivePersona().length;
+    } catch {
+      panelLen = 0;
+    }
+    recordTurn({
+      t: now,
+      sid: last.sid,
+      scene,
+      state: {
+        valence: state.mood.valence,
+        arousal: state.mood.arousal,
+        energy: state.energy,
+        intimacy: state.intimacy,
+        focus: state.focus,
+      },
+      knobs: { verbosity: m.verbosity, warmth: m.warmth, patience: m.patience },
+      textLen: last.textLen,
+      panelLen,
+      reflex: last.hits,
+    });
+  } catch {
+    /* 观测层任何问题都不能影响提示词 */
+  }
+  return text;
 }
