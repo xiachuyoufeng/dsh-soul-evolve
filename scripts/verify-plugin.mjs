@@ -142,13 +142,15 @@ try {
 try {
   const persona = await import(join(root, "src/persona.js"));
   let doc = persona.loadPersonas();
-  ok(Object.keys(doc.cards).length === 0, "Soul 初始为空（不改变原有行为）");
+  ok(doc.active === persona.DEFAULT_CARD_NAME, `首次安装种入默认人格（激活 ${persona.DEFAULT_CARD_NAME}）`);
+  ok(Object.keys(doc.cards).length === 1, "首次安装只有一张默认卡");
+  ok(doc.cards[doc.active].content.includes("## Identity"), "默认人格带 Identity 段，开箱可用");
   doc = persona.putPersona(doc, "测试 Soul", "## Identity\n你是测试助手。\n\n## Personality\n- 简洁");
   persona.savePersonas(doc);
   const injected = persona.readActivePersona();
   ok(injected.includes("## Identity"), "Soul 注入文本包含正文");
   ok(injected.includes("Soul 面板"), "Soul 段带标题");
-  ok(persona.listPersonas(doc).length === 1, "Soul 列表可读");
+  ok(persona.listPersonas(doc).length === 2, "Soul 列表可读（默认卡 + 新建卡）");
 
   let rejected = false;
   try {
@@ -293,6 +295,21 @@ try {
 
   const traceRes = await call({ method: "GET", url: `${P}/trace?limit=5` });
   ok(traceRes.code === 200 && Array.isArray(traceRes.body.turns), `GET /trace 返回 ${traceRes.body.total} 条观测`);
+
+  /* 源码升级是开发通道：没配 DSH_SOUL_SOURCE 时必须干净关闭，而不是指向不存在的目录 */
+  const savedSource = process.env.DSH_SOUL_SOURCE;
+  delete process.env.DSH_SOUL_SOURCE;
+  const statusNoSource = await call({ method: "GET", url: `${P}/status` });
+  ok(statusNoSource.body.upgradeAvailable === false, "非本地链接安装时不提供源码升级入口");
+  ok(statusNoSource.body.source === null, "未配源码时 status.source 为 null（前端据此隐藏入口）");
+  const upgradeDenied = await call({
+    method: "POST",
+    url: `${P}/upgrade`,
+    headers: { "x-soul-action": "1" },
+  });
+  ok(upgradeDenied.code === 400, `未配源码时升级接口返回 400（实际 ${upgradeDenied.code}）`);
+  ok(/DSH_SOUL_SOURCE/.test(upgradeDenied.body.error || ""), "错误信息说明该如何打开这个开发通道");
+  if (savedSource !== undefined) process.env.DSH_SOUL_SOURCE = savedSource;
 
   // 清掉预检建的东西
   const { savePersonas } = await import(join(root, "src/persona.js"));

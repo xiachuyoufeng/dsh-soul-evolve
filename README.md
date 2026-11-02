@@ -45,6 +45,12 @@ cordis.patch.yml    挂载声明（DSH 按它把插件挂进配置树）
       name: 'dsh-soul-evolve'
 ```
 
+安装：
+
+```bash
+dsh plugin add dsh-soul-evolve
+```
+
 装之前先跑预检（零风险，不碰 DSH 配置）：
 
 ```bash
@@ -58,7 +64,7 @@ node --test test/soul.test.js    # 35 个用例
 - `version` 字段 + `migrate()`：结构升级时写迁移分支
 - 写文件用临时文件 + rename，避免崩溃损坏
 
-## 升级（点击升级）
+## 升级（开发通道，默认关闭）
 
 插件详情页的「从本地源码升级」按钮走这条路：
 
@@ -72,7 +78,13 @@ node --test test/soul.test.js    # 35 个用例
 
 > 背景：官方「更新」按钮要求包有 `installTarget`，而它只对 DSH 内置的官方目录生成，第三方本地包永远没有——所以这里在 `plugins.detail.actions` 插槽里自备一个入口。
 
-源码目录默认 `~/deepseek-harness/soul-workspace`，可用 `DSH_SOUL_SOURCE` 环境变量覆盖。
+这条通道**只给开发用**，公开发布版默认关闭：没有设置 `DSH_SOUL_SOURCE` 时，接口返回不可用，配置面板不渲染「升级」区块、插件详情页也不出现按钮——不会留一个点下去就报错的入口。
+
+自己开发时这样打开：
+
+```bash
+export DSH_SOUL_SOURCE=/path/to/dsh-soul-evolve
+```
 
 接口：
 
@@ -108,6 +120,7 @@ Soul 是"静态骨架"，状态是"动态血肉"：Soul 面板负责「我是谁
 - **注入**：激活卡作为 `soul:persona` 段（order 10）注入提示词，改完下一轮请求生效，无需重启
 - **硬约束**：正文不能含 `{{` / `}}`（DSH 提示词变量语法，否则整个提示词组装会失败），保存时直接拒绝
 - **工具**：`soul_persona`（list / get / set / delete / activate / evolve / forget / history / rollback），AI 可读写但不会自动改
+- **开箱内容**：首次安装会自动种入一份通用默认人格（`templates/default-soul.md`），面板不是空白的；改它就是自己的，删掉不会自动长回来
 
 ### 正文与演化条目（1.0.0）
 
@@ -170,14 +183,18 @@ Soul 是"静态骨架"，状态是"动态血肉"：Soul 面板负责「我是谁
 
 ## 开发与同步（迁移后工作流）
 
-项目位置：`~/deepseek-harness/soul-workspace`
-
 ```bash
-node --test test/soul.test.js          # 35 个单元测试
+node --test test/soul.test.js          # 36 个单元测试
 node scripts/verify-plugin.mjs         # 安装前预检（不碰 DSH 配置）
 node scripts/stats.mjs                 # 观测数据验收（场景温差/切换率/面板预算）
 node scripts/check-define.mjs          # 用真实 defineTool 校验工具定义
 bash scripts/sync-to-profile.sh        # 同步到 DSH profile（自动备份）
 ```
 
-卸载：`bash backup/<时间戳>/restore.sh`，或手工从 `profiles/web/package.json` 的 bundles 里删掉 `dsh-soul-evolve` 一行。
+卸载：`dsh plugin remove dsh-soul-evolve`。状态与 Soul 面板数据留在 `~/.dsh-soul-evolve/`，不会被删——重装就接上。
+
+## License
+
+MIT
+
+发布与上架的完整步骤见 [PUBLISHING.md](PUBLISHING.md)。

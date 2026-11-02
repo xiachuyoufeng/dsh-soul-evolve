@@ -13,11 +13,44 @@ import { homedir } from "node:os";
 /** 当前安装位置：agent 侧加载的就是这个目录 */
 export const INSTALL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/** 默认源码目录（可用 DSH_SOUL_SOURCE 覆盖） */
-export const DEFAULT_SOURCE = "/Users/xiachu/deepseek-harness/soul-workspace";
-
+/**
+ * 源码目录：只认两处，都指向"这台机器上真的有源码"的情形。
+ *
+ * 1. `DSH_SOUL_SOURCE` 环境变量（显式指定）
+ * 2. 已装副本的 generation.json 写着 `sourceSpec: "link:<某目录>"`——只有用
+ *    「添加插件 → 本地目录」装进来的包才是这样；从 npm 装的包这里写的是版本号。
+ *
+ * 所以公开发布版里，普通用户的 `/api/status` 拿到 source: null，面板不渲染
+ * 升级区块；开发者照旧能用，且不需要在代码里硬编码任何路径。
+ */
 export function sourceDir() {
-  return process.env.DSH_SOUL_SOURCE || DEFAULT_SOURCE;
+  const env = process.env.DSH_SOUL_SOURCE?.trim();
+  if (env) return env;
+
+  try {
+    // <generation>/node_modules/dsh-soul-evolve → <generation>
+    const generationDir = dirname(dirname(INSTALL_DIR));
+    const meta = JSON.parse(readFileSync(join(generationDir, "generation.json"), "utf8"));
+    const spec = String(meta?.sourceSpec ?? "");
+    const m = /^(?:link|file):(.+)$/.exec(spec);
+    if (!m) return null;
+    const dir = m[1].trim();
+    return dir || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 源码升级是否可用：源码目录存在且确实是个 dsh-soul-evolve 包 */
+export function sourceAvailable() {
+  const dir = sourceDir();
+  if (!dir || !existsSync(dir)) return false;
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    return pkg.name === "dsh-soul-evolve";
+  } catch {
+    return false;
+  }
 }
 
 /** 包根下需要随升级同步的文件（client.js 是浏览器半侧，漏了它面板不会更新） */
@@ -28,6 +61,7 @@ function srcFiles(dir) {
 }
 
 export function readInfo(dir = INSTALL_DIR) {
+  if (!dir) return null;
   try {
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
     return { name: pkg.name, version: pkg.version, dir };
@@ -74,6 +108,13 @@ export function restore(backupDir, target = INSTALL_DIR) {
 export function syncFromSource(options = {}) {
   const source = options.source ?? sourceDir();
   const target = options.target ?? INSTALL_DIR;
+
+  if (!source) {
+    throw Object.assign(
+      new Error("未配置源码目录：这个升级通道只在开发时可用，需要设置环境变量 DSH_SOUL_SOURCE 指向本包源码"),
+      { status: 400 },
+    );
+  }
 
   const srcInfo = readInfo(source);
   if (!srcInfo || srcInfo.name !== "dsh-soul-evolve") {

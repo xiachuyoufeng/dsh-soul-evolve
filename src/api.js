@@ -19,7 +19,7 @@
  * 只在有 webServer 的界面注册（Web GUI）；TUI 等没有该服务时静默跳过。
  */
 import { URL } from "node:url";
-import { syncFromSource, readInfo, sourceDir, INSTALL_DIR } from "./upgrade.js";
+import { syncFromSource, readInfo, sourceDir, sourceAvailable, INSTALL_DIR } from "./upgrade.js";
 import { saveState, applyDelta, readStateSync, getStateScope, scopeDir } from "./state.js";
 import { modulate, describe } from "./reflex.js";
 import { readTurns } from "./trace.js";
@@ -91,6 +91,8 @@ export function createHandler() {
         return send(res, 200, {
           ok: true,
           installed: readInfo(INSTALL_DIR),
+          // 源码升级是开发通道：没配 DSH_SOUL_SOURCE 时这里全为 null，前端据此不渲染入口
+          upgradeAvailable: sourceAvailable(),
           source: readInfo(sourceDir()),
           sourceDir: sourceDir(),
           stateScope: getStateScope(),

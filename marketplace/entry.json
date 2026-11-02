@@ -1,0 +1,13 @@
+{
+  "name": "dsh-soul-evolve",
+  "repo": "OWNER/dsh-soul-evolve",
+  "npm": "dsh-soul-evolve",
+  "description": "给 dsh 加一层会自己变的状态与 Soul 面板：五维状态随对话累积衰减，按场景调整语气，人格条目带权重与 4000 字注入预算，改完下一轮生效。",
+  "category": "bundle",
+  "tags": ["memory", "ui"],
+  "added": "2026-11-02",
+  "lastVerified": "2026-11-02",
+  "verifiedAgainst": "0.2.1-rc.3",
+  "status": "verified",
+  "evidence": "package.json#dsh.bundle"
+}

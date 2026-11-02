@@ -2,6 +2,7 @@
   "name": "dsh-soul-evolve",
   "version": "1.0.0",
   "description": "人格状态与缓慢演化插件：反射弧驱动的状态层 + 场景切面 + 带权重预算的演化条目",
+  "license": "MIT",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -22,11 +23,25 @@
     "src",
     "client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "templates"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.2.1-rc.2"
   },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "cordis",
+    "persona",
+    "soul",
+    "memory",
+    "llm"
+  ],
   "dsh": {
     "client": {
       "inject": [

@@ -674,6 +674,25 @@ window.__ModuleLoader__.load({
     /* 升级面板 / 详情页按钮                                              */
     /* ------------------------------------------------------------------ */
 
+    /**
+     * 源码升级是开发通道：后端只有配了 DSH_SOUL_SOURCE 才报告可用。
+     * 不可用时整块不渲染——公开发布版里不该出现一个点下去会报错的按钮。
+     */
+    function useUpgradeAvailable() {
+      var st = React.useState(false);
+      var setAvailable = st[1];
+      React.useEffect(function () {
+        api("/api/status")
+          .then(function (body) {
+            setAvailable(Boolean(body.upgradeAvailable));
+          })
+          .catch(function () {
+            /* 探测失败按不可用处理 */
+          });
+      }, []);
+      return st[0];
+    }
+
     function UpgradeBody() {
       var st = React.useState({ phase: "idle", message: "", version: null });
       var view = st[0];
@@ -717,6 +736,7 @@ window.__ModuleLoader__.load({
     }
 
     function UpgradePanel() {
+      if (!useUpgradeAvailable()) return null;
       return h(
         "section",
         { className: "__ds_card" },
@@ -742,6 +762,7 @@ window.__ModuleLoader__.load({
 
     /** 插件详情页右上角的升级按钮（保留原入口） */
     function UpgradeAction(props) {
+      var available = useUpgradeAvailable();
       var state = React.useState({ phase: "idle", message: "" });
       var view = state[0];
       var setView = state[1];
@@ -766,6 +787,7 @@ window.__ModuleLoader__.load({
       }, []);
 
       if (!pkg || pkg.name !== "dsh-soul-evolve") return null;
+      if (!available) return null;
 
       var label = view.phase === "running" ? "升级中…" : view.phase === "done" ? "已升级" : "从本地源码升级";
       var tone =

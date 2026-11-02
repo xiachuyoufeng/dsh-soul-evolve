@@ -29,10 +29,16 @@
 - 配置 `stateScope: "global" | "workspace"`（默认 global）；workspace 模式按工作目录哈希分桶，项目之间状态不串味
 - 「主体性」不写成代码，落在 Soul 面板的 Boundaries（DSH 本身已有审批策略，插件重复实现只会打架）
 
+**公开发布准备**
+- **首次安装不再是空白**：自动种入 `templates/default-soul.md`（通用默认人格，已激活）；改它就是自己的，删掉不会自动长回来
+- **源码升级改成本地链接才出现**：读 `generation.json` 的 `sourceSpec`，只有「本地目录安装」才提供这个开发通道；从 npm 装的用户拿到的 `source: null`，面板不渲染该区块，接口返回 400 带说明。不再有任何硬编码路径
+- 补 `license: MIT`、`LICENSE`、`engines.dsh`（`>=0.2.1-rc.2`，对应 dsh 0.2.1-alpha.4 起的门禁规则）、`keywords`、`files`（含 templates）
+- `scripts/sync-to-profile.sh` 改为自动探测安装位置（原先写死了一个早已失效的路径）
+
 **其它**
 - 状态 schema 升到 v2（补 `scene` 字段，老文件自动迁移）
 - `soul_persona get` 现在返回条目、历史、注入占用
-- 预检 74 项、单测 35 例全过
+- 预检 80 项、单测 36 例全过
 
 ## 0.6.0 — 2026-10-30
 

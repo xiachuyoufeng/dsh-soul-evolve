@@ -242,14 +242,26 @@ test("trace: 记录字段完整", () => {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 test("persona: 老文件的 ## Evolved 段迁移成结构化条目", () => {
-  const base = "# 海拉\n\n## Identity\n你是海拉。\n\n## Evolved\n- 〔已修正〕旧条目一\n- 长期偏好条目二\n";
-  const raw = { version: 1, active: "海拉", cards: { 海拉: { content: base, updatedAt: 1 } } };
+  const base = "# 示例人格\n\n## Identity\n你是一个助手。\n\n## Evolved\n- 〔已修正〕旧条目一\n- 长期偏好条目二\n";
+  const raw = { version: 1, active: "示例人格", cards: { 示例人格: { content: base, updatedAt: 1 } } };
   // migrateDoc 不是导出的，直接走 loadPersonas 的路径：用 splitEvolved 验证拆分逻辑
   const { base: b, evolved } = P.splitEvolved(base);
   assert.equal(evolved.length, 2);
   assert.ok(!b.includes("## Evolved"));
   assert.ok(b.includes("## Identity"));
-  assert.ok(raw.cards.海拉.content.includes("## Evolved"));
+  assert.ok(raw.cards["示例人格"].content.includes("## Evolved"));
+});
+
+test("persona: 首次安装种入可用的默认人格（不是空面板）", () => {
+  const doc = P.defaultPersonaDoc();
+  assert.equal(doc.active, P.DEFAULT_CARD_NAME);
+  const card = doc.cards[doc.active];
+  assert.ok(card, "默认卡应存在");
+  assert.ok(card.content.includes("## Identity"), "默认正文应有 Identity 段");
+  assert.ok(card.content.includes("## Evolution"), "默认正文应带演化规则");
+  assert.ok(!card.content.includes("{{"), "默认正文不能含提示词变量语法");
+  const r = P.renderCard(card);
+  assert.ok(r.used > 0 && r.used <= P.INJECT_BUDGET, "默认注入应在预算内");
 });
 
 test("persona: correction 不衰减，preference 会衰减", () => {

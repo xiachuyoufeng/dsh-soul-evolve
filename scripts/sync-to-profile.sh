@@ -1,29 +1,35 @@
 #!/bin/bash
-# 把当前工作区的插件同步到 DSH profile 的安装目录（需要写权限）
-set -e
+# 把本包同步到 DSH profile 里已安装的副本（开发用）。
+#
+# 注意：这条路径只在开发时有用。公开发布版的正规做法是 `dsh plugin add`，
+# 或者在插件详情的「升级」入口里点按钮（等价于 POST /dsh-soul-evolve/api/upgrade）。
+#
+# 用法：bash scripts/sync-to-profile.sh
+# 目标目录自动探测：profiles/.generations/live/dsh-soul-evolve+<ver>+<hash>/node_modules/dsh-soul-evolve
+set -euo pipefail
+
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-PROF="/Users/xiachu/Library/Application Support/dsh-desktop/harness/profiles/web"
-TARGET="$PROF/node_modules/dsh-soul"
+HARNESS="${DSH_HARNESS_HOME:-$HOME/Library/Application Support/dsh-desktop/harness}"
 
 echo "1/3 预检"
 node "$HERE/scripts/verify-plugin.mjs" > /dev/null || { echo "预检未通过，已中止"; exit 1; }
 
-echo "2/3 备份现有安装"
-if [ -d "$TARGET" ]; then
-  BK="$HERE/backup/$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$BK"
-  cp -R "$TARGET" "$BK/dsh-soul.bak"
-  cp "$PROF/package.json" "$BK/package.json.bak"
-  echo "  备份到 $BK"
+echo "2/3 定位已安装副本"
+TARGET="$(ls -d "$HARNESS"/profiles/.generations/live/dsh-soul-evolve+*/node_modules/dsh-soul-evolve 2>/dev/null | head -1 || true)"
+if [ -z "${TARGET:-}" ]; then
+  echo "  未找到已安装的 dsh-soul-evolve，先通过插件页安装一次" >&2
+  exit 1
 fi
+echo "  $TARGET"
 
-echo "3/3 同步"
-rm -rf "$TARGET"
-mkdir -p "$TARGET"
-cp -R "$HERE/src" "$HERE/package.json" "$HERE/cordis.patch.yml" "$HERE/README.md" "$TARGET/"
-node -e '
-const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
-const b=p.dsh.profile.bundles; if(!b.includes("dsh-soul")) b.push("dsh-soul");
-fs.writeFileSync(process.argv[1],JSON.stringify(p,null,2)+"\n");
-' "$PROF/package.json"
-echo "同步完成。重启 DSH 后生效。"
+echo "3/3 备份并同步"
+BK="$HERE/backup/upgrade-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BK"
+cp -R "$TARGET" "$BK/dsh-soul-evolve.bak"
+
+rm -rf "$TARGET/src"
+cp -R "$HERE/src" "$HERE/client.js" "$HERE/templates" "$HERE/package.json" \
+      "$HERE/cordis.patch.yml" "$HERE/README.md" "$HERE/CHANGELOG.md" "$HERE/LICENSE" "$TARGET/"
+
+echo "  已同步，备份在 $BK"
+echo "  重启 DSH 生效"

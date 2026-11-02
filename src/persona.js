@@ -4,9 +4,9 @@
  * 存储：`~/.dsh-soul-evolve/personas.json`（DSH_SOUL_HOME 可覆盖）
  *   {
  *     version: 2,
- *     active: "海拉",
+ *     active: "默认人格",
  *     cards: {
- *       "海拉": {
+ *       "默认人格": {
  *         content:   "手写基底（Identity / Personality / …）",
  *         entries:   [{ id, text, category, weight, lastHit, createdAt }],
  *         history:   [{ at, content }],   // 最近 10 版，可回滚
@@ -20,8 +20,9 @@
  * 2. 注入有字数预算。演化条目只增不减，不加预算的话面板会一路涨到 2 万字上限，
  *    之后新条目写不进去、每轮 token 还一直在涨。所以注入按权重排序取 Top-N。
  */
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 export const PERSONA_VERSION = 2;
@@ -60,8 +61,39 @@ export function personaPath() {
   return join(dataDir(), "personas.json");
 }
 
-export function defaultPersonaDoc() {
-  return { version: PERSONA_VERSION, active: null, cards: {} };
+/** 首次安装自动种入的默认 Soul 面板名 */
+export const DEFAULT_CARD_NAME = "默认人格";
+
+/** 随包分发的默认人格模板 */
+const DEFAULT_TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), "..", "templates", "default-soul.md");
+
+/**
+ * 首次安装的初始文档。
+ *
+ * 空面板对新用户没有意义——装完打开只看到一块空白，既不知道格式也不知道能做什么。
+ * 所以种一份通用的默认人格（随包的 templates/default-soul.md）并设为激活；
+ * 用户改它就是自己的了，删掉也不会再被种回来（loadPersonas 只在文件不存在时走这里）。
+ */
+export function defaultPersonaDoc(now = Date.now()) {
+  let content = "";
+  try {
+    content = readFileSync(DEFAULT_TEMPLATE, "utf8").trim();
+  } catch {
+    return { version: PERSONA_VERSION, active: null, cards: {} };
+  }
+  if (!content) return { version: PERSONA_VERSION, active: null, cards: {} };
+  return {
+    version: PERSONA_VERSION,
+    active: DEFAULT_CARD_NAME,
+    cards: {
+      [DEFAULT_CARD_NAME]: {
+        content,
+        entries: [],
+        history: [],
+        updatedAt: now,
+      },
+    },
+  };
 }
 
 /* ---------------- 迁移 ---------------- */
