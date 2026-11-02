@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.0 — 2026-11-02
+
+**两条沉淀轨道分开：工作方法习惯 / 性格表达**
+
+原来一个 `pattern` 类混装所有推断条目，"该怎么做"和"该什么语气"写在同一段里，互相盖掉。
+现在拆成两个维度，各自算、各自写、各自注入：
+
+| 轨道 | 写什么 | 检测器 | 初始权重 / 半衰 |
+|---|---|---|---|
+| `habit` | 怎么干活（连续协作、要不要请示） | `habit:ongoing` `habit:direct` | 0.5 / 60 天 |
+| `character` | 以什么姿态出现（基调、口风、追问、反馈） | `character:scene:*` `character:steady` `character:curious` `character:feedback` | 0.45 / 45 天 |
+
+- `src/pattern.js`：`analyze()` 增加反射弧命中统计；候选带 `dimension`；新增 `dimensionOf()`、`DIMENSION_LABEL`
+- `src/persona.js`：`INITIAL_WEIGHT`/`HALF_LIFE` 换成分维度；`renderCard()` 注入分成 `## Evolved` / `## 工作习惯` / `## 性格表达` 三段
+- `src/sediment.js`：每个维度各写 1 条（一边不够格不挡另一边）；新增 `coverageOf()` 字面覆盖检查
+- `src/evolve.js`：`qualifiesInferred()` 要求 `dimension` 落在两条轨道内；`BANNED` 增加"声称内在状态"两条
+- `client.js`：面板条目显示中文类别名，候选按轨道分组
+- **habit 轨只收带数字的观测结论**。`habit:brief`（"回复该短"）已移除——面板正文早就手写了"默认短"，memory 的 user 轨也存得下，再统计一遍只是把同一句话重说一次
+- **覆盖查重**：写入前与面板正文、已有条目做字面相似度（阈值 0.3，实测重述 45% / 真实候选 ≤9%），撞了就跳过并记录原因
+- 测试 58 例；预检 86 项
+
 ## 1.1.0 — 2026-11-02
 
 **交互沉淀：性格从交互里长出来，不再只靠用户点名纠正**

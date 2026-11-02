@@ -302,6 +302,8 @@ try {
   const pats = await call({ method: "GET", url: `${P}/patterns` });
   ok(pats.code === 200 && pats.body.stats && Array.isArray(pats.body.ready), "GET /patterns 返回统计与候选");
   ok(typeof pats.body.gates?.minDays === "number", `沉淀门槛暴露给前端（跨天 ≥ ${pats.body.gates?.minDays}）`);
+  const dims = (pats.body.dimensions || []).map((d) => d.dimension);
+  ok(dims.includes("habit") && dims.includes("character"), `两条沉淀轨道分开暴露（${dims.join(" / ")}）`);
   const patsNoHeader = await call({ method: "POST", url: `${P}/patterns/sediment` });
   ok(patsNoHeader.code === 403, "沉淀写接口缺 x-soul-action 头被拒（CSRF）");
 

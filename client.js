@@ -609,7 +609,7 @@ window.__ModuleLoader__.load({
                   h(
                     "span",
                     { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } },
-                    e.category +
+                    (CATEGORY_LABEL[e.category] || e.category) +
                       " · " +
                       e.effective +
                       (e.evidence ? " · 依据 " + e.evidence.sessions + " 会话/" + e.evidence.turns + " 轮" : "") +
@@ -805,6 +805,13 @@ window.__ModuleLoader__.load({
       var stats = (d && d.stats) || null;
       var ready = (d && d.ready) || [];
       var emitted = (d && d.emitted) || [];
+      var dimLabel = {};
+      var dimOrder = [];
+      ((d && d.dimensions) || []).forEach(function (x) {
+        dimLabel[x.dimension] = x.label;
+        dimOrder.push(x.dimension);
+      });
+      if (dimOrder.length === 0) dimOrder = ["habit", "character"];
 
       return h(
         "section",
@@ -841,13 +848,22 @@ window.__ModuleLoader__.load({
           ? h("span", { className: "__ds_hint" }, "暂无可沉淀的模式。这是正常的——数据还不够天数时本来就不该出条目。")
           : h(
               "div",
-              { style: { display: "flex", flexDirection: "column", gap: "3px" } },
-              ready.map(function (c) {
+              { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+              dimOrder.map(function (dim) {
+                var rows = ready.filter(function (c) { return c.dimension === dim; });
+                if (rows.length === 0) return null;
                 return h(
                   "div",
-                  { key: c.key, style: { display: "flex", gap: "8px", alignItems: "center" } },
-                  h("span", { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } }, c.key),
-                  h("span", { style: { flex: "1", fontSize: "12px" } }, c.event)
+                  { key: "ready-" + dim, style: { display: "flex", flexDirection: "column", gap: "3px" } },
+                  h("span", { className: "__ds_hint", style: { fontWeight: 600 } }, dimLabel[dim] || dim),
+                  rows.map(function (c) {
+                    return h(
+                      "div",
+                      { key: c.key, style: { display: "flex", gap: "8px", alignItems: "center" } },
+                      h("span", { className: "__ds_hint", style: { minWidth: "132px", whiteSpace: "nowrap" } }, c.key),
+                      h("span", { style: { flex: "1", fontSize: "12px" } }, c.event)
+                    );
+                  })
                 );
               })
             ),
@@ -860,7 +876,11 @@ window.__ModuleLoader__.load({
                 return h(
                   "div",
                   { key: b.key, style: { display: "flex", gap: "8px", alignItems: "center", opacity: 0.6 } },
-                  h("span", { className: "__ds_hint", style: { minWidth: "104px", whiteSpace: "nowrap" } }, b.key),
+                  h(
+                    "span",
+                    { className: "__ds_hint", style: { minWidth: "132px", whiteSpace: "nowrap" } },
+                    (dimLabel[b.dimension] || "") + " " + b.key
+                  ),
                   h("span", { style: { flex: "1", fontSize: "12px" } }, b.event + " · " + b.missing.join("、"))
                 );
               })
@@ -943,6 +963,16 @@ window.__ModuleLoader__.load({
         view.message ? h("span", { style: { fontSize: "11px", color: tone, maxWidth: "320px", textAlign: "right" } }, view.message) : null
       );
     }
+
+    /** 条目类别 → 面板上的中文名 */
+    var CATEGORY_LABEL = {
+      correction: "纠正",
+      repeat: "重复犯错",
+      preference: "偏好",
+      scene: "场景",
+      habit: "工作习惯",
+      character: "性格表达",
+    };
 
     var inject = ["slots"];
 

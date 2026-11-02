@@ -42,7 +42,8 @@ export const INITIAL_WEIGHT = {
   correction: 1.0, // 用户明确纠正 —— 满权重且不衰减
   repeat: 0.9, // 重复犯错
   preference: 0.6, // 长期偏好
-  pattern: 0.45, // 交互沉淀的推断条目 —— 低权重起步，靠重复验证坐实
+  habit: 0.5, // 交互沉淀·工作习惯 —— 低权重起步，靠重复验证坐实
+  character: 0.45, // 交互沉淀·性格表达 —— 表达比习惯更该慢一点变
   scene: 0.4, // 场景相关
 };
 
@@ -51,8 +52,15 @@ export const HALF_LIFE = {
   correction: Infinity,
   repeat: Infinity,
   preference: 90 * DAY,
-  pattern: 45 * DAY, // 推断错了会自己淡出，不需要有人来删
+  habit: 60 * DAY, // 干活方式相对稳定，但也允许跟着任务变
+  character: 45 * DAY, // 表达调子更易受当下状态影响，衰减快一些
   scene: 30 * DAY,
+};
+
+/** 注入与面板里两类沉淀条目的分组标题 */
+export const DIMENSION_SECTION = {
+  habit: "## 工作习惯",
+  character: "## 性格表达",
 };
 
 export function dataDir() {
@@ -308,7 +316,7 @@ export function addEntry(card, { text, category = "preference", now = Date.now()
   for (const e of entries) {
     if (e.category !== cat) continue;
     // 同一条模式重新验证时按 key 收敛，避免措辞漂移导致重复条目
-    if (cat === "pattern" && patternKey && e.patternKey === patternKey) {
+    if (patternKey && e.patternKey === patternKey) {
       best = e;
       bestSim = 1;
       break;
@@ -371,11 +379,23 @@ export function renderCard(card, { budget = INJECT_BUDGET, now = Date.now() } = 
   const injected = [];
   const truncated = [];
 
-  if (ranked.length) {
-    const evolveHeader = "\n\n## Evolved";
+  // 三组分开注入：明说的事件归一档，工作习惯与性格表达各占一段。
+  // 混在一起写，读到时"该怎么做"和"该什么语气"会互相盖掉。
+  const groups = [
+    { key: "evolved", title: "## Evolved", rows: [] },
+    { key: "habit", title: DIMENSION_SECTION.habit, rows: [] },
+    { key: "character", title: DIMENSION_SECTION.character, rows: [] },
+  ];
+  const byKey = new Map(groups.map((g) => [g.key, g]));
+  const GROUP_OF = (c) => (c === "habit" || c === "character" ? c : "evolved");
+  for (const e of ranked) byKey.get(GROUP_OF(e.category)).rows.push(e);
+
+  for (const g of groups) {
+    if (g.rows.length === 0) continue;
+    const header = `\n\n${g.title}`;
     let lines = [];
-    let lineCost = evolveHeader.length;
-    for (const e of ranked) {
+    let lineCost = header.length;
+    for (const e of g.rows) {
       const line = `- ${e.text}`;
       const cost = line.length + 1;
       if (used + lineCost + cost <= budget) {
@@ -387,7 +407,7 @@ export function renderCard(card, { budget = INJECT_BUDGET, now = Date.now() } = 
       }
     }
     if (lines.length) {
-      parts.push("", "## Evolved", ...lines);
+      parts.push("", g.title, ...lines);
       used += lineCost;
     }
   }

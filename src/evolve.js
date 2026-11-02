@@ -4,11 +4,17 @@
 export const MAX_NEW_ENTRIES = 2;
 export const MAX_ACTIVE_ENTRIES = 10;
 
+/** 推断条目允许落的两个维度（与 pattern.js 的 DIMENSIONS 对应） */
+export const INFERRED_DIMENSIONS = ["habit", "character"];
+
 const BANNED = [
   /我(太|好|真)(开心|难过|激动|愤怒)/,
   /我(这次|今天)表现得?(很好|不错|出色)/,
   /我感觉到你/,
   /我(真的)?很(爱你|想你)/,
+  // 推断条目只能写"以后怎么做"，不能声称自己有什么内在状态
+  /我(开始)?(喜欢|享受|偏爱)(这种|被|你)/,
+  /我(越来越|变得更)(亲近|喜欢|依赖)/,
 ];
 
 /**
@@ -36,6 +42,8 @@ export function qualifiesInferred(event, { minSessions = 3, minDays = 3, minTurn
   if (!event || typeof event !== "object") return false;
   if (event.kind !== "pattern") return false;
   if (event.userExplicit === true) return false;
+  // 必须落在两条轨道之一：习惯与表达分开写，混在一起的条目会互相打架
+  if (!INFERRED_DIMENSIONS.includes(event.dimension)) return false;
   const e = event.evidence;
   if (!e || typeof e !== "object") return false;
   const sessions = Number(e.sessions) || 0;

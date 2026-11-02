@@ -8,11 +8,29 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { dataDir, readTurns } from "./trace.js";
-import { MAX_PER_RUN, MIN_DAYS, MIN_SESSIONS, MIN_TURNS, evidenceKey, gateOf, mine, shouldRevalidate } from "./pattern.js";
+import {
+  DIMENSION_LABEL,
+  DIMENSIONS,
+  MAX_PER_RUN,
+  MIN_DAYS,
+  MIN_SESSIONS,
+  MIN_TURNS,
+  evidenceKey,
+  gateOf,
+  mine,
+  shouldRevalidate,
+} from "./pattern.js";
 import { buildEntry, qualifiesInferred } from "./evolve.js";
-import { addEntry, loadPersonas, savePersonas } from "./persona.js";
+import { addEntry, loadPersonas, savePersonas, similarity } from "./persona.js";
 
 export const PATTERNS_VERSION = 1;
+/**
+ * 与面板正文/已有条目的字面相似度达到这个值，就认为「已经写过了」。
+ * 0.3 是实测出来的：同一句话说法的重述落在 45%（"默认短，够用就停" vs
+ * "默认短：够用就停（用户明确嫌长过）"），而真实候选撞面板最高只有 9%。
+ * 取 0.3 两边都留了余量。
+ */
+export const COVERED_THRESHOLD = 0.3;
 /** 两次自动沉淀之间的最小间隔：避免连续几轮就把多个模式一次性写成条目 */
 export const GLOBAL_COOLDOWN_DAYS = 1;
 
@@ -43,6 +61,32 @@ export function savePatternState(state) {
 }
 
 /**
+ * 这一条是不是已经有人写过了？
+ *
+ * 只做字面比较——它挡得住"把面板里的『默认短』换个说法再说一遍"，
+ * 但挡不住语义同义、措辞完全不同的重复。所以它是护栏，不是保证：
+ * 真正防重复建设靠的是「habit 轨只收带数字的观测结论」这条选型。
+ */
+export function coverageOf(card, c) {
+  // 只比我"学到了什么/以后怎么做"这两句：event 里的数字面板不会写，比进来只会稀释相似度
+  const mine = [c.learned, c.next].join(" ");
+  const learnt = String(c.learned ?? "");
+  const targets = [];
+  for (const raw of String(card?.content ?? "").split("\n")) {
+    const t = raw.replace(/^[-*\s#]+/, "").trim();
+    if (t.length >= 6) targets.push({ text: t, by: "面板正文" });
+  }
+  for (const e of card?.entries ?? []) targets.push({ text: String(e.text ?? ""), by: "已有条目" });
+  let best = { sim: 0, by: "", text: "" };
+  for (const t of targets) {
+    // learned 单独比一遍：有些重复就发生在这一句里，混进 next 会被拉低
+    const sim = Math.max(similarity(mine, t.text), similarity(learnt, t.text));
+    if (sim > best.sim) best = { sim, by: t.by, text: t.text };
+  }
+  return best;
+}
+
+/**
  * 只读预览：算出当前够格的模式，不写任何文件。面板与调试用。
  */
 export function preview(turns = readTurns(), opts = {}) {
@@ -62,12 +106,13 @@ export function preview(turns = readTurns(), opts = {}) {
       until: r.stats.until,
     },
     gates,
+    dimensions: DIMENSIONS.map((d) => ({ dimension: d, label: DIMENSION_LABEL[d] })),
     ready: r.candidates
       .filter((c) => gateOf(c, gates).ok && qualifiesInferred(c, gates))
-      .map((c) => ({ key: c.key, event: c.event, evidence: c.evidence })),
+      .map((c) => ({ key: c.key, dimension: c.dimension, event: c.event, evidence: c.evidence })),
     blocked: r.candidates
       .filter((c) => !gateOf(c, gates).ok)
-      .map((c) => ({ key: c.key, event: c.event, missing: gateOf(c, gates).missing })),
+      .map((c) => ({ key: c.key, dimension: c.dimension, event: c.event, missing: gateOf(c, gates).missing })),
     candidates: r.candidates,
   };
 }
@@ -103,15 +148,20 @@ export function sediment({ now = Date.now(), dryRun = false, force = false, max 
   if (eligible.length === 0) return { written, skipped, preview: p };
   if (dryRun) return { written: [], skipped, preview: p, wouldWrite: eligible.map((c) => c.key) };
 
-  // 一次最多写 max 条：宁可慢，也不要一次堆出好几条没人认过的
-  for (const c of eligible.slice(0, max)) {
-    let line = "";
-    try {
-      line = buildEntry({ date: c.date, event: c.event, learned: c.learned, next: c.next });
-    } catch (err) {
-      skipped.push({ key: c.key, reason: `条目不合法：${err.message}` });
+  // 每个维度各写 max 条：习惯与表达分开推进，一边不够格不影响另一边
+  const picked = [];
+  const perDim = new Map();
+  for (const c of eligible) {
+    const used = perDim.get(c.dimension) ?? 0;
+    if (used >= max) {
+      skipped.push({ key: c.key, reason: `本轮 ${DIMENSION_LABEL[c.dimension] ?? c.dimension} 已写满 ${max} 条，留到下次` });
       continue;
     }
+    perDim.set(c.dimension, used + 1);
+    picked.push(c);
+  }
+
+  for (const c of picked) {
     const doc = loadPersonas();
     const name = doc.active;
     const card = name ? doc.cards[name] : null;
@@ -119,7 +169,21 @@ export function sediment({ now = Date.now(), dryRun = false, force = false, max 
       skipped.push({ key: c.key, reason: "没有激活的 Soul 面板" });
       continue;
     }
-    const r = addEntry(card, { text: line, category: "pattern", now, evidence: c.evidence, patternKey: c.key });
+    // 面板正文或已有条目已经说过的，不再重说一遍
+    const cov = coverageOf(card, c);
+    if (cov.sim >= COVERED_THRESHOLD) {
+      skipped.push({ key: c.key, reason: `已被${cov.by}覆盖（相似 ${Math.round(cov.sim * 100)}%）` });
+      continue;
+    }
+    let line = "";
+    try {
+      line = buildEntry({ date: c.date, event: c.event, learned: c.learned, next: c.next });
+    } catch (err) {
+      skipped.push({ key: c.key, reason: `条目不合法：${err.message}` });
+      continue;
+    }
+    // 维度直接落成条目的类别：注入与面板都按它分段
+    const r = addEntry(card, { text: line, category: c.dimension, now, evidence: c.evidence, patternKey: c.key });
     doc.cards[name] = r.card;
     doc.updatedAt = now;
     savePersonas(doc);
@@ -128,7 +192,13 @@ export function sediment({ now = Date.now(), dryRun = false, force = false, max 
       evidenceKey: evidenceKey(c),
       count: (Number(state.patterns[c.key]?.count) || 0) + 1,
     };
-    written.push({ key: c.key, text: line, added: r.added, weight: (r.added ? r.entry : r.hit)?.weight ?? 0 });
+    written.push({
+      key: c.key,
+      dimension: c.dimension,
+      text: line,
+      added: r.added,
+      weight: (r.added ? r.entry : r.hit)?.weight ?? 0,
+    });
   }
 
   if (written.length > 0) {
