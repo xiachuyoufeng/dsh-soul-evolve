@@ -54,10 +54,19 @@ export function sourceAvailable() {
 }
 
 /** 包根下需要随升级同步的文件（client.js 是浏览器半侧，漏了它面板不会更新） */
-const ROOT_FILES = ["package.json", "cordis.patch.yml", "README.md", "CHANGELOG.md", "client.js"];
+const ROOT_FILES = ["package.json", "cordis.patch.yml", "README.md", "CHANGELOG.md", "LICENSE", "client.js"];
 
 function srcFiles(dir) {
   return readdirSync(join(dir, "src")).filter((f) => f.endsWith(".js"));
+}
+
+/** templates/ 下的 .md（默认人格模板）；目录不存在时返回空数组 */
+function templateFiles(dir) {
+  try {
+    return readdirSync(join(dir, "templates")).filter((f) => f.endsWith(".md"));
+  } catch {
+    return [];
+  }
 }
 
 export function readInfo(dir = INSTALL_DIR) {
@@ -86,6 +95,10 @@ export function backup(target = INSTALL_DIR, dest = backupRoot()) {
   for (const f of srcFiles(target)) {
     copyFileSync(join(target, "src", f), join(dest, "src", f));
   }
+  for (const f of templateFiles(target)) {
+    mkdirSync(join(dest, "templates"), { recursive: true });
+    copyFileSync(join(target, "templates", f), join(dest, "templates", f));
+  }
   return dest;
 }
 
@@ -98,6 +111,11 @@ export function restore(backupDir, target = INSTALL_DIR) {
   const srcBak = join(backupDir, "src");
   if (existsSync(srcBak)) {
     for (const f of readdirSync(srcBak)) copyFileSync(join(srcBak, f), join(target, "src", f));
+  }
+  const tplBak = join(backupDir, "templates");
+  if (existsSync(tplBak)) {
+    mkdirSync(join(target, "templates"), { recursive: true });
+    for (const f of readdirSync(tplBak)) copyFileSync(join(tplBak, f), join(target, "templates", f));
   }
 }
 
@@ -141,6 +159,10 @@ export function syncFromSource(options = {}) {
     for (const rel of ROOT_FILES) {
       const p = join(source, rel);
       if (existsSync(p)) writeAtomic(join(target, rel), readFileSync(p));
+    }
+    for (const f of templateFiles(source)) {
+      mkdirSync(join(target, "templates"), { recursive: true });
+      writeAtomic(join(target, "templates", f), readFileSync(join(source, "templates", f)));
     }
   } catch (err) {
     try {

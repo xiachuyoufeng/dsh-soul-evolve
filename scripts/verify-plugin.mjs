@@ -184,6 +184,8 @@ try {
   ok(result.restartRequired === true, "升级后标记需要重启");
   ok(result.files > 0, `同步文件数: ${result.files}`);
   ok(readFileSync(join(fake, "client.js"), "utf8").includes("plugins.bundle.config"), "升级会同步 client.js（浏览器半侧）");
+  ok(existsSync(join(fake, "templates", "default-soul.md")), "升级会同步默认人格模板（少了它首次安装就没有开箱内容）");
+  ok(existsSync(join(fake, "LICENSE")), "升级会同步 LICENSE");
   ok(existsSync(join(result.backup, "src")), "升级前生成了备份");
   ok(existsSync(join(result.backup, "client.js")), "升级前备份了 client.js");
 } catch (err) {
