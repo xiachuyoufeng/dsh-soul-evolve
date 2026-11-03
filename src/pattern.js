@@ -39,8 +39,6 @@ export const MAX_SWITCH_PER_SESSION = 0.5;
 /** 长会话判定的每会话轮次中位下限 */
 export const LONG_SESSION_MEDIAN = 12;
 
-/** 信号型检测器（靠反射弧命中次数）的最低命中数 */
-export const MIN_SIGNAL_HITS = 15;
 /** 「一句话指令」判定的最低命中数与占比 */
 export const DIRECT_HITS = 20;
 export const DIRECT_RATE = 0.12;
@@ -50,8 +48,6 @@ export const CURIOUS_RATE = 0.05;
 /** 「反馈基调」判定的最低反馈数与正面占比 */
 export const FEEDBACK_HITS = 20;
 export const FEEDBACK_POSITIVE = 0.6;
-/** 主场景判定：占比下限 */
-export const TOP_SCENE_SHARE = 0.5;
 
 /** 两个沉淀维度 */
 export const DIMENSIONS = ["habit", "character"];
@@ -179,17 +175,8 @@ export function candidates(stats, opts = {}) {
 
   /* ---------- 轨道一：工作方法习惯 ---------- */
 
-  // H2 长会话：这是连续协作，不是一次性问答
-  if (enough && stats.turnsPerSession >= LONG_SESSION_MEDIAN) {
-    push("habit", "habit:ongoing", {
-      event: `会话中位 ${stats.turnsPerSession} 轮、共 ${stats.sessions} 个会话`,
-      learned: "上下文在对方那边一直续着，不是每次从零开始",
-      next: "不每轮重述背景，也不反复确认同一件事",
-      turns: stats.total,
-    });
-  }
-
-  // H3 一句话指令：少反问，先把能定的做掉
+  // H1 一句话指令：少反问，先把能定的做掉。
+  // 排前面是因为它直接改行为；"会话长"只是对话事实，指导性弱一档。
   const shortHits = Number(reflex.short) || 0;
   if (enough && shortHits >= DIRECT_HITS && shortHits / stats.total >= DIRECT_RATE) {
     push("habit", "habit:direct", {
@@ -200,30 +187,20 @@ export function candidates(stats, opts = {}) {
     });
   }
 
-  /* ---------- 轨道二：性格表达 ---------- */
-
-  // C1 主场景主导：默认基调停在这一档
-  if (stats.topScene !== "unknown" && stats.topSceneShare >= TOP_SCENE_SHARE) {
-    const sceneSessions = stats.sceneSessions.get(stats.topScene)?.size ?? 0;
-    if (stats.topSceneTurns >= minTurns && sceneSessions >= minSessions) {
-      push("character", `character:scene:${stats.topScene}`, {
-        event: `${stats.topScene} 场合占 ${stats.topSceneTurns}/${stats.total} 轮（${pct(stats.topSceneTurns, stats.total)}%）`,
-        learned: "默认姿态就落在这一档，不用每轮重新判断",
-        next: "换成别的场合再调口风；信号不明显时别一上来就改",
-        turns: stats.topSceneTurns,
-      });
-    }
-  }
-
-  // C2 口风稳：一次会话里不来回换调子
-  if (enough && stats.switchesPerSession <= MAX_SWITCH_PER_SESSION) {
-    push("character", "character:steady", {
-      event: `${stats.sessions} 个会话共 ${stats.switches} 次场合切换`,
-      learned: "一次会话里姿态本来就该稳住",
-      next: "同一会话保持一种调子；要变也得是真信号变了",
+  // H2 长会话：这是连续协作，不是一次性问答
+  if (enough && stats.turnsPerSession >= LONG_SESSION_MEDIAN) {
+    push("habit", "habit:ongoing", {
+      event: `会话中位 ${stats.turnsPerSession} 轮、共 ${stats.sessions} 个会话`,
+      learned: "上下文在对方那边一直续着，不是每次从零开始",
+      next: "不每轮重述背景，也不反复确认同一件事",
       turns: stats.total,
     });
   }
+
+  /* ---------- 轨道二：性格表达 ---------- */
+
+  // 场景本身不写条目：它已经由「人格状态」段每轮实时注入，再沉淀一遍是同义反复。
+  // 而且场景是内部枚举（work/tech/...），写进条目对读的人没有指导意义。
 
   // C3 爱追问原因：先给机制，再落结论
   const curiousHits = Number(reflex.curious) || 0;
@@ -246,6 +223,17 @@ export function candidates(stats, opts = {}) {
       learned: "现在这个语气对方是认的",
       next: "别为了显得专业把语气磨平；温度有效，收着用就行",
       turns: feedback,
+    });
+  }
+
+  // C5 口风稳：一次会话里不来回换调子。排在最后——它的信息量最低，
+  // 只是"别乱变"，不该抢掉 curious / feedback 的写入名额。
+  if (enough && stats.switchesPerSession <= MAX_SWITCH_PER_SESSION) {
+    push("character", "character:steady", {
+      event: `${stats.sessions} 个会话共 ${stats.switches} 次场合切换`,
+      learned: "一次会话里姿态本来就该稳住",
+      next: "同一会话保持一种调子；要变也得是真信号变了",
+      turns: stats.total,
     });
   }
 

@@ -141,6 +141,8 @@ export function preview(turns = readTurns(), opts = {}) {
       textMedian: r.stats.textMedian,
       turnsPerSession: r.stats.turnsPerSession,
       switchesPerSession: Math.round(r.stats.switchesPerSession * 100) / 100,
+      // 命中数是推断条目的直接依据，面板要能看见；漏掉它等于让人无法核对
+      reflex: { ...r.stats.reflex },
       since: r.stats.since,
       until: r.stats.until,
     },

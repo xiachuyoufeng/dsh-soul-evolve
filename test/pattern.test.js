@@ -60,9 +60,9 @@ test("pattern: 跨天且会话够多才产出候选", () => {
   const r = mine(makeTurns({ days: 4, sessions: 4 }));
   assert.ok(r.stats.days >= MIN_DAYS);
   assert.ok(r.stats.sessions >= MIN_SESSIONS);
-  const keys = r.candidates.map((c) => c.key);
-  assert.ok(keys.includes("habit:ongoing"));
-  assert.ok(keys.includes("character:scene:work"));
+  // 这个规模只够最低门槛，断言"两条轨道都有候选"而不是具体哪一个
+  assert.ok(r.candidates.some((c) => c.dimension === "habit"), `实际 ${r.candidates.map((c) => c.key)}`);
+  assert.ok(r.candidates.some((c) => c.dimension === "character"));
 });
 
 test("pattern: 候选分两条轨道，互不混写", () => {
@@ -89,13 +89,27 @@ test("pattern: 习惯轨只收带数字的观测结论（不再产出 brief）",
   }
 });
 
-test("pattern: 表达检测器看姿态（基调/口风/追问/反馈）", () => {
+test("pattern: 表达检测器看姿态（追问/反馈/口风）", () => {
   const r = mine(makeTurns({ days: 4, sessions: 4, perSession: 40, hits: { curious: 0.2, praise: 0.2 } }));
   const keys = r.candidates.filter((c) => c.dimension === "character").map((c) => c.key);
-  assert.ok(keys.includes("character:scene:work"), "主场景应产出基调候选");
   assert.ok(keys.includes("character:steady"), "切换少应产出口风稳候选");
   assert.ok(keys.includes("character:curious"), "追问多应产出 curious");
   assert.ok(keys.includes("character:feedback"), "正面反馈多应产出 feedback");
+});
+
+test("pattern: 不再产出场景条目（场景已由状态段实时注入，写进条目是同义反复）", () => {
+  const r = mine(makeTurns({ days: 4, sessions: 4, perSession: 40 }));
+  assert.ok(!r.candidates.some((c) => c.key.startsWith("character:scene:")), "场景不该成为沉淀候选");
+});
+
+test("pattern: 候选顺序按信息量排（能改行为的在前）", () => {
+  const r = mine(makeTurns({ days: 4, sessions: 4, perSession: 40, hits: { short: 0.3, curious: 0.2, praise: 0.2 } }));
+  const habit = r.candidates.filter((c) => c.dimension === "habit").map((c) => c.key);
+  const character = r.candidates.filter((c) => c.dimension === "character").map((c) => c.key);
+  // habit:direct 直接改行为，该排在"会话长"前面
+  assert.equal(habit[0], "habit:direct", `实际 ${habit}`);
+  // character:steady 信息量最低，该排在最后
+  assert.equal(character[character.length - 1], "character:steady", `实际 ${character}`);
 });
 
 test("sediment: 查重也看记忆插件的条目（两边不各写一条同义结论）", () => {
