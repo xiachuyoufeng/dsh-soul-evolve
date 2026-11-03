@@ -44,13 +44,25 @@ export function scopeDir() {
   return join(base, "workspaces", hash);
 }
 
+/**
+ * 中立基线：状态从这三组值出发，也往这里衰减。
+ * 面板要拿它画刻度线——没有基线，"0.41" 这个数字看不出偏高还是偏低。
+ */
+export const BASELINE = Object.freeze({
+  valence: 0,
+  arousal: 0.4,
+  energy: 0.6,
+  intimacy: 0.1,
+  focus: 0.5,
+});
+
 export function defaultState(now = Date.now()) {
   return {
     version: STATE_VERSION,
-    mood: { valence: 0, arousal: 0.4 },
-    energy: 0.6,
-    intimacy: 0.1,
-    focus: 0.5,
+    mood: { valence: BASELINE.valence, arousal: BASELINE.arousal },
+    energy: BASELINE.energy,
+    intimacy: BASELINE.intimacy,
+    focus: BASELINE.focus,
     /** 场景状态：当前场景 + 滞回用的连续占优计数（v0.8 起） */
     scene: { current: "work", candidate: null, streak: 0 },
     updatedAt: now,

@@ -20,7 +20,7 @@
  */
 import { URL } from "node:url";
 import { syncFromSource, readInfo, sourceDir, sourceAvailable, INSTALL_DIR } from "./upgrade.js";
-import { saveState, applyDelta, readStateSync, getStateScope, scopeDir } from "./state.js";
+import { saveState, applyDelta, readStateSync, getStateScope, scopeDir, BASELINE } from "./state.js";
 import { modulate, describe } from "./reflex.js";
 import { readTurns } from "./trace.js";
 import {
@@ -77,6 +77,7 @@ function stateView() {
     modulation: modulate(state, state.scene?.current ?? null),
     label: describe(state),
     scene: state.scene?.current ?? "work",
+    baseline: BASELINE,
     stateScope: getStateScope(),
     stateDir: scopeDir(),
   };

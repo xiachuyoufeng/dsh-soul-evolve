@@ -143,6 +143,8 @@ export function preview(turns = readTurns(), opts = {}) {
       switchesPerSession: Math.round(r.stats.switchesPerSession * 100) / 100,
       // 命中数是推断条目的直接依据，面板要能看见；漏掉它等于让人无法核对
       reflex: { ...r.stats.reflex },
+      // 按天分布：面板画活跃度柱状图，也用来判断数据是不是一天灌进来的
+      daily: (r.stats.daily || []).slice(-14),
       since: r.stats.since,
       until: r.stats.until,
     },
@@ -150,10 +152,16 @@ export function preview(turns = readTurns(), opts = {}) {
     dimensions: DIMENSIONS.map((d) => ({ dimension: d, label: DIMENSION_LABEL[d] })),
     ready: r.candidates
       .filter((c) => gateOf(c, gates).ok && qualifiesInferred(c, gates))
-      .map((c) => ({ key: c.key, dimension: c.dimension, event: c.event, evidence: c.evidence })),
+      .map((c) => ({
+        key: c.key, dimension: c.dimension, event: c.event, evidence: c.evidence,
+        gate: (({ have, need }) => ({ have, need }))(gateOf(c, gates)),
+      })),
     blocked: r.candidates
       .filter((c) => !gateOf(c, gates).ok)
-      .map((c) => ({ key: c.key, dimension: c.dimension, event: c.event, missing: gateOf(c, gates).missing })),
+      .map((c) => {
+        const g = gateOf(c, gates);
+        return { key: c.key, dimension: c.dimension, event: c.event, missing: g.missing, gate: { have: g.have, need: g.need } };
+      }),
     candidates: r.candidates,
   };
 }

@@ -114,6 +114,14 @@ export function analyze(turns = []) {
     switchesPerSid.set(sid, sw);
   }
 
+  // 按天分桶：面板画"每天活跃度"柱状图用，也能看出是不是某一天一次性灌进来的数据
+  const perDay = new Map();
+  for (const r of rows) {
+    const key = dayOf(Number(r.t) || 0);
+    perDay.set(key, (perDay.get(key) ?? 0) + 1);
+  }
+  const daily = [...perDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, turns]) => ({ date, turns }));
+
   const total = rows.length;
   const topScene = [...sceneTurns.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["unknown", 0];
   const switches = [...switchesPerSid.values()].reduce((a, b) => a + b, 0);
@@ -135,6 +143,7 @@ export function analyze(turns = []) {
     switches,
     switchesPerSession: sessions.size > 0 ? switches / sessions.size : 0,
     reflex,
+    daily,
     sids: [...sessions],
   };
 }
@@ -270,7 +279,8 @@ export function gateOf(c, gates = {}) {
   if (have.sessions < minSessions) missing.push(`会话 ${have.sessions}/${minSessions}（还差 ${minSessions - have.sessions} 个）`);
   if (have.days < minDays) missing.push(`跨天 ${have.days}/${minDays}（还差 ${minDays - have.days} 天）`);
   if (have.turns < minTurns) missing.push(`轮次 ${have.turns}/${minTurns}（还差 ${minTurns - have.turns} 轮）`);
-  return { ok: missing.length === 0, missing };
+  // have/need 一并带出去：面板要画进度条，只有"还差 1 天"这种文案画不出比例
+  return { ok: missing.length === 0, missing, have, need: { sessions: minSessions, days: minDays, turns: minTurns } };
 }
 
 /** 证据指纹：用于判断「模式是否又有新证据」，避免重复沉淀 */
