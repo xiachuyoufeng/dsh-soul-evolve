@@ -1,0 +1,181 @@
+/**
+ * 组件渲染冒烟测试。
+ *
+ * 存在的理由：1.3.0 改 PatternPanel 时漏了一个变量声明（emitted），
+ * 一进面板就抛 ReferenceError，整个配置面板从界面上消失——而语法检查、
+ * 单元测试、发布预检三样全绿，因为没有一个环节真的渲染过组件。
+ *
+ * 这里用 mock 的 React 把每个面板按「有数据」和「无数据」各渲染一遍，
+ * 任何 ReferenceError / TypeError 都会当场抛出。
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const source = readFileSync(join(here, "..", "client.js"), "utf8");
+
+/** 把 client.js 装进一个假 window，取出 factory 产出的模块 */
+function loadClient() {
+  let captured = null;
+  const fakeWindow = {
+    __ModuleLoader__: {
+      load(spec) {
+        captured = spec;
+      },
+    },
+  };
+  const prevWindow = globalThis.window;
+  globalThis.window = fakeWindow;
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function("window", "document", "fetch", source)(fakeWindow, undefined, async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+  }
+  assert.ok(captured, "client.js 没有调用 __ModuleLoader__.load");
+  return captured;
+}
+
+/** 构造 mock React：useState 的首次调用可以注入自定义初始值 */
+function makeReact(injectFirstState) {
+  let count = 0;
+  function Component(props) {
+    this.props = props;
+  }
+  Component.prototype.setState = function (next) {
+    Object.assign(this.state || {}, next);
+  };
+  return {
+    Component: Component,
+    Fragment: Symbol("Fragment"),
+    createElement(type, props, ...children) {
+      // 惰性：只记录，由 walk() 真正调用组件。直接在这里调用组件的话，
+      // 子组件的异常会抛到错误边界外面，边界就测不出来了。
+      return { type, props: props || {}, children };
+    },
+    useState(init) {
+      count += 1;
+      if (count === 1 && injectFirstState !== undefined) return [injectFirstState, () => {}];
+      return [typeof init === "function" ? init() : init, () => {}];
+    },
+    useCallback(fn) {
+      return fn;
+    },
+    useEffect() {},
+    useMemo(fn) {
+      return fn();
+    },
+    useRef(v) {
+      return { current: v };
+    },
+  };
+}
+
+/** 把惰性树真正渲染一遍，并模拟 class 组件的错误边界 */
+function walk(node) {
+  if (node === null || node === undefined || typeof node !== "object") return node;
+  if (Array.isArray(node)) return node.map(walk);
+  const type = node.type;
+  if (typeof type !== "function") {
+    return { type, props: node.props, children: (node.children || []).map(walk) };
+  }
+  if (type.prototype && typeof type.prototype.render === "function") {
+    const inst = new type(node.props);
+    inst.props = node.props;
+    inst.state = { error: null };
+    try {
+      return walk(inst.render());
+    } catch (err) {
+      const derived = typeof type.getDerivedStateFromError === "function" ? type.getDerivedStateFromError(err) : null;
+      if (!derived) throw err;
+      Object.assign(inst.state, derived);
+      return walk(inst.render());
+    }
+  }
+  return walk(type(node.props));
+}
+
+function render(component, injectFirstState) {
+  const spec = loadClient();
+  const mod = spec.factory((name) => {
+    if (name === "react") return makeReact(injectFirstState);
+    throw new Error("未预期的依赖：" + name);
+  });
+  const KEY = { config: "ConfigPanel", patterns: "PatternPanel", state: "StatePanel", personas: "PersonaPanel" };
+  const Panel = mod.__components[KEY[component] || component];
+  assert.ok(typeof Panel === "function", "拿不到组件 " + component);
+  return walk(Panel({}));
+}
+
+test("client: ConfigPanel 在无数据时能渲染", () => {
+  const tree = render("config");
+  assert.ok(tree, "渲染结果为空");
+});
+
+test("client: 每个子面板在有数据时都能渲染（catch 未声明变量这类崩溃）", () => {
+  const patterns = {
+    ok: true,
+    stats: {
+      turns: 1419, sessions: 16, days: 2, topScene: "work", topSceneShare: 0.5,
+      textMedian: 18, turnsPerSession: 49, switchesPerSession: 0.7,
+      reflex: { praise: 64, blame: 0, curious: 119, short: 349, long: 0, repeat: 0 },
+      daily: [{ date: "2026-11-02", turns: 812 }, { date: "2026-11-03", turns: 607 }],
+      since: 1, until: 2,
+    },
+    gates: { minSessions: 3, minDays: 3, minTurns: 12 },
+    dimensions: [{ dimension: "habit", label: "工作习惯" }, { dimension: "character", label: "性格表达" }],
+    ready: [],
+    blocked: [{
+      key: "habit:direct", dimension: "habit", event: "一句话指令 349/1419 轮（25%）",
+      missing: ["跨天 2/3（还差 1 天）"],
+      gate: { have: { sessions: 16, days: 2, turns: 349 }, need: { sessions: 3, days: 3, turns: 12 } },
+    }],
+    candidates: [{ key: "habit:direct", dimension: "habit", event: "一句话指令 349/1419 轮（25%）" }],
+    emitted: [{ key: "habit:direct", dimension: "habit" }],
+  };
+  const tree = render("patterns", { status: "ready", data: patterns, error: "", message: "测试" });
+  assert.ok(tree, "渲染结果为空");
+});
+
+test("client: 沉淀面板在「够格」状态下也能渲染", () => {
+  const patterns = {
+    ok: true,
+    stats: {
+      turns: 100, sessions: 9, days: 5, topScene: "work", topSceneShare: 0.6, textMedian: 20,
+      turnsPerSession: 30, switchesPerSession: 0.2,
+      reflex: { short: 30, curious: 20, praise: 10, blame: 0, long: 0, repeat: 0 },
+      daily: [{ date: "2026-11-01", turns: 40 }], since: 1, until: 2,
+    },
+    gates: { minSessions: 3, minDays: 3, minTurns: 12 },
+    dimensions: [{ dimension: "habit", label: "工作习惯" }],
+    ready: [{
+      key: "habit:direct", dimension: "habit", event: "一句话指令 30/100 轮",
+      evidence: { sessions: 9, days: 5, turns: 30 },
+      gate: { have: { sessions: 9, days: 5, turns: 30 }, need: { sessions: 3, days: 3, turns: 12 } },
+    }],
+    blocked: [], candidates: [{ key: "habit:direct", dimension: "habit", event: "x" }], emitted: [],
+  };
+  const tree = render("patterns", { status: "ready", data: patterns, error: "", message: "" });
+  assert.ok(tree);
+});
+
+test("client: 状态面板在无数据/有数据时都能渲染", () => {
+  assert.ok(render("state", { status: "ready", data: null, error: "" }));
+  assert.ok(
+    render("state", {
+      status: "ready",
+      error: "",
+      data: {
+        ok: true,
+        state: { mood: { valence: 0.41, arousal: 0.08 }, energy: 0.9, intimacy: 0.52, focus: 1, events: [{ at: 1, note: "x" }] },
+        modulation: { verbosity: 0.84, warmth: 0.51, patience: 1 },
+        baseline: { valence: 0, arousal: 0.4, energy: 0.6, intimacy: 0.1, focus: 0.5 },
+        label: "偏亮·有劲", scene: "work", stateScope: "global",
+      },
+    })
+  );
+});

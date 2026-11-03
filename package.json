@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul-evolve",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "人格状态与缓慢演化插件：反射弧驱动的状态层 + 场景切面 + 带权重预算的演化条目",
   "license": "MIT",
   "author": "xiachuyoufeng",
@@ -63,7 +63,7 @@
     }
   },
   "scripts": {
-    "test": "node --test test/soul.test.js test/pattern.test.js",
+    "test": "node --test test/soul.test.js test/pattern.test.js test/client-render.test.js",
     "verify": "node scripts/verify-plugin.mjs"
   }
 }

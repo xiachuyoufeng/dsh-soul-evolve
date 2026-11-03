@@ -975,6 +975,7 @@ window.__ModuleLoader__.load({
 
       var d = view.data;
       var stats = (d && d.stats) || null;
+      var emitted = (d && d.emitted) || [];
       var dimLabel = {};
       var dimOrder = [];
       ((d && d.dimensions) || []).forEach(function (x) {
@@ -1164,14 +1165,52 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * 单块面板的错误边界。
+     *
+     * 1.3.0 出过一次「整个配置面板凭空消失」：PatternPanel 里漏声明一个变量，
+     * 渲染时抛 ReferenceError，React 把整棵子树都卸了，用户看到的是面板没了，
+     * 连错误在哪都不知道。有了边界，坏的那块只坏自己并显示原因，其余照常。
+     */
+    var PanelBoundary = (function () {
+      if (typeof React.Component !== "function") return null;
+      function PanelBoundary(props) {
+        React.Component.call(this, props);
+        this.state = { error: null };
+      }
+      PanelBoundary.prototype = Object.create(React.Component.prototype);
+      PanelBoundary.prototype.constructor = PanelBoundary;
+      PanelBoundary.getDerivedStateFromError = function (error) {
+        return { error: error };
+      };
+      PanelBoundary.prototype.render = function () {
+        if (this.state.error) {
+          return h(
+            "section",
+            { className: "__ds_card" },
+            h("span", { className: "__ds_title" }, (this.props.label || "面板") + " 加载失败"),
+            h("span", { className: "__ds_error" }, String((this.state.error && this.state.error.message) || this.state.error)),
+            h("span", { className: "__ds_hint" }, "其余面板不受影响。把这段报错贴给作者即可定位。")
+          );
+        }
+        return this.props.children;
+      };
+      return PanelBoundary;
+    })();
+
+    /** 有边界就包一层，没有（测试环境）就直出 */
+    function guard(label, node) {
+      return PanelBoundary ? h(PanelBoundary, { label: label }, node) : node;
+    }
+
     function ConfigPanel() {
       return h(
         "div",
         { className: "__ds_root", "data-dsh-soul-evolve": "config" },
-        h(StatePanel, null),
-        h(PersonaPanel, null),
-        h(PatternPanel, null),
-        h(UpgradePanel, null)
+        guard("人格状态", h(StatePanel, null)),
+        guard("Soul 面板", h(PersonaPanel, null)),
+        guard("交互沉淀", h(PatternPanel, null)),
+        guard("升级", h(UpgradePanel, null))
       );
     }
 
@@ -1258,7 +1297,13 @@ window.__ModuleLoader__.load({
       });
     }
 
-    module.exports = { apply: apply, inject: inject };
+    /* __components 只给测试用：渲染冒烟测试要单独渲染每个面板，
+       只导出 apply 的话拿不到子组件。生产侧只调 apply，多这个字段无影响。 */
+    module.exports = {
+      apply: apply,
+      inject: inject,
+      __components: { ConfigPanel: ConfigPanel, StatePanel: StatePanel, PersonaPanel: PersonaPanel, PatternPanel: PatternPanel },
+    };
     return module.exports;
   },
 });
