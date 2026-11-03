@@ -83,7 +83,14 @@ window.__ModuleLoader__.load({
       ".__ds_entryRow{display:flex;align-items:flex-start;gap:8px;padding:4px 0;border-bottom:1px solid var(--dsw-alias-border-l2)}" +
       ".__ds_entryRow:last-child{border-bottom:none}" +
       ".__ds_entryText{flex:1;font-size:12px;line-height:1.5;min-width:0}" +
-      ".__ds_sectionLabel{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);margin-top:2px}";
+      ".__ds_sectionLabel{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);margin-top:2px}" +
+      /* 正文折叠：soul.md 全文太长，默认收起，点标题展开 */
+      ".__ds_fold{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}" +
+      ".__ds_foldHead{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;background:var(--dsw-alias-bg-layer-3);user-select:none}" +
+      ".__ds_foldHead:hover{background:var(--dsw-alias-bg-layer-2)}" +
+      ".__ds_foldTitle{font-size:12px;color:var(--dsw-alias-label-primary)}" +
+      ".__ds_foldChevron{font-size:10px;color:var(--dsw-alias-label-tertiary);width:10px;text-align:center;margin-left:auto}" +
+      ".__ds_foldBody{padding:10px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--dsw-alias-border-l2)}";
 
     function injectStyles() {
       if (typeof document === "undefined") return function () {};
@@ -385,6 +392,10 @@ window.__ModuleLoader__.load({
       var entryDraft = React.useState({ text: "", category: "preference" });
       var ed = entryDraft[0];
       var setEntryDraft = entryDraft[1];
+      /* 正文默认收起：一屏看到状态、条目、导出就够了，全文按需展开 */
+      var open = React.useState(false);
+      var isOpen = open[0];
+      var setOpen = open[1];
 
       var setErr = function (message) {
         setView(function (prev) {
@@ -472,8 +483,17 @@ window.__ModuleLoader__.load({
         setBusy(true);
         api("/api/personas", { method: "PUT", body: { name: name, content: d.content } })
           .then(function (body) {
+            /* 面板不再提供"切换人格"入口，所以保存就要顺带把它设为当前人格，
+               否则新建的卡保存完不生效，用户也没有地方能把它选中 */
+            if (body.active !== name) {
+              return api("/api/personas/active", { method: "PUT", body: { name: name } });
+            }
+            return body;
+          })
+          .then(function (body) {
             setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已保存「" + name + "」" });
             reloadCard(name, "已保存「" + name + "」（旧正文已进历史）");
+            setOpen(false);
           })
           .catch(function (err) {
             setErr(err.message || String(err));
@@ -548,6 +568,7 @@ window.__ModuleLoader__.load({
       var create = function () {
         setDraft({ name: "", content: "" });
         setDetail({ entries: [], history: [], inject: null });
+        setOpen(true);
         setNotice("已清空草稿，填好名字和正文后点「保存」");
       };
 
@@ -572,37 +593,6 @@ window.__ModuleLoader__.load({
             setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已删除「" + name + "」" });
             setDraft({ name: "", content: "" });
             setDetail({ entries: [], history: [], inject: null });
-          })
-          .catch(function (err) {
-            setErr(err.message || String(err));
-          })
-          .then(function () {
-            setBusy(false);
-          });
-      };
-
-      var activate = function () {
-        var name = (d.name || "").trim();
-        if (!name) return;
-        setBusy(true);
-        api("/api/personas/active", { method: "PUT", body: { name: name } })
-          .then(function (body) {
-            setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已激活「" + name + "」" });
-            reloadCard(name);
-          })
-          .catch(function (err) {
-            setErr(err.message || String(err));
-          })
-          .then(function () {
-            setBusy(false);
-          });
-      };
-
-      var deactivate = function () {
-        setBusy(true);
-        api("/api/personas/active", { method: "PUT", body: { name: null } })
-          .then(function (body) {
-            setView({ status: "ready", active: body.active, cards: body.cards, error: "", notice: "已停用 Soul" });
           })
           .catch(function (err) {
             setErr(err.message || String(err));
@@ -647,6 +637,10 @@ window.__ModuleLoader__.load({
       };
 
       var cards = view.cards || [];
+      var body = String(d.content || "");
+      var lineCount = body ? body.split("\n").length : 0;
+      var charCount = body.length;
+      var isActive = !!d.name && view.active === d.name;
 
       return h(
         "section",
@@ -658,54 +652,80 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "__ds_row" },
+            h(
+              "button",
+              { type: "button", className: "__ds_btn", onClick: exportFile, disabled: !d.content, title: "把当前 Soul 导出为 .md 文件" },
+              "导出 .md"
+            ),
             h("button", { type: "button", className: "__ds_btn", onClick: refresh }, "刷新"),
             h("button", { type: "button", className: "__ds_btn", onClick: create }, "新建")
           )
         ),
         view.error ? h("span", { className: "__ds_error" }, view.error) : null,
         view.notice ? h("span", { className: "__ds_ok" }, view.notice) : null,
+
+        /* 只有当前这一个人格，不提供切换——换人格就是改正文再保存 */
         h(
           "div",
-          { className: "__ds_row" },
-          h(
-            "select",
-            {
-              className: "__ds_input __ds_select",
-              value: d.name,
-              onChange: function (event) {
-                pick(event.target.value);
-              },
-            },
-            h("option", { value: "" }, cards.length === 0 ? "（还没有 Soul 面板）" : "选择 Soul 面板…"),
-            cards.map(function (card) {
-              return h("option", { value: card.name, key: card.name }, (card.active ? "● " : "") + card.name);
-            })
-          ),
-          h("input", {
-            className: "__ds_input",
-            style: { width: "180px" },
-            placeholder: "Soul 面板名",
-            value: d.name,
-            onChange: function (event) {
-              setDraft(Object.assign({}, d, { name: event.target.value }));
-            },
-          }),
-          h(
-            "label",
-            { className: "__ds_btn", style: { display: "inline-flex", alignItems: "center" } },
-            "导入 .md",
-            h("input", { type: "file", accept: ".md,.markdown,.txt", style: { display: "none" }, onChange: importFile })
-          )
+          { className: "__ds_row", style: { gap: "8px" } },
+          h("span", { className: "__ds_badge __ds_badgeHabit", style: { fontSize: "11px", padding: "2px 8px" } }, d.name || "未命名"),
+          isActive ? h("span", { className: "__ds_badge __ds_badgeChar" }, "生效中") : null,
+          cards.length > 1 ? h("span", { className: "__ds_hint" }, "另有 " + (cards.length - 1) + " 份旧稿") : null,
+          h("span", { className: "__ds_hint", style: { marginLeft: "auto" } }, lineCount + " 行 · " + charCount + " 字")
         ),
-        h("textarea", {
-          className: "__ds_textarea",
-          placeholder:
-            "Soul 正文（Markdown，soul.md 风格）：\n\n## Identity\n你是……\n\n## Personality\n- ……\n\n注意：不能包含 {{ 或 }}",
-          value: d.content,
-          onChange: function (event) {
-            setDraft(Object.assign({}, d, { content: event.target.value }));
-          },
-        }),
+
+        /* 正文默认收起：一屏能看到状态、条目、导出就够，全文按需展开 */
+        h(
+          "div",
+          { className: "__ds_fold" },
+          h(
+            "div",
+            {
+              className: "__ds_foldHead",
+              onClick: function () {
+                setOpen(!isOpen);
+              },
+              title: isOpen ? "收起正文" : "展开正文",
+            },
+            h("span", { className: "__ds_foldTitle" }, "正文 Markdown"),
+            h("span", { className: "__ds_hint" }, isOpen ? "收起" : "展开编辑"),
+            h("span", { className: "__ds_foldChevron" }, isOpen ? "▾" : "▸")
+          ),
+          isOpen
+            ? h(
+                "div",
+                { className: "__ds_foldBody" },
+                h(
+                  "div",
+                  { className: "__ds_row" },
+                  h("input", {
+                    className: "__ds_input",
+                    style: { flex: "1", minWidth: "160px" },
+                    placeholder: "Soul 面板名",
+                    value: d.name,
+                    onChange: function (event) {
+                      setDraft(Object.assign({}, d, { name: event.target.value }));
+                    },
+                  }),
+                  h(
+                    "label",
+                    { className: "__ds_btn", style: { display: "inline-flex", alignItems: "center" } },
+                    "导入 .md",
+                    h("input", { type: "file", accept: ".md,.markdown,.txt", style: { display: "none" }, onChange: importFile })
+                  )
+                ),
+                h("textarea", {
+                  className: "__ds_textarea",
+                  placeholder:
+                    "Soul 正文（Markdown，soul.md 风格）：\n\n## Identity\n你是……\n\n## Personality\n- ……\n\n注意：不能包含 {{ 或 }}",
+                  value: d.content,
+                  onChange: function (event) {
+                    setDraft(Object.assign({}, d, { content: event.target.value }));
+                  },
+                })
+              )
+            : null
+        ),
 
         /* ---- 演化条目：带权重，按预算注入 ---- */
         h(
@@ -832,11 +852,8 @@ window.__ModuleLoader__.load({
           "div",
           { className: "__ds_row" },
           h("button", { type: "button", className: "__ds_btn __ds_btnPrimary", onClick: save, disabled: isBusy }, "保存"),
-          h("button", { type: "button", className: "__ds_btn", onClick: activate, disabled: isBusy || !d.name }, "设为激活"),
-          h("button", { type: "button", className: "__ds_btn", onClick: deactivate, disabled: isBusy }, "停用"),
-          h("button", { type: "button", className: "__ds_btn", onClick: exportFile, disabled: !d.content }, "导出 .md"),
           h("button", { type: "button", className: "__ds_btn __ds_btnDanger", onClick: remove, disabled: isBusy || !d.name }, "删除"),
-          h("span", { className: "__ds_status" }, view.active ? "当前激活：" + view.active : "当前未激活任何 Soul")
+          h("span", { className: "__ds_status" }, view.active ? "当前人格：" + view.active : "当前没有生效的 Soul")
         ),
         h(
           "span",

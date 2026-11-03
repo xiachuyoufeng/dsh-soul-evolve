@@ -40,16 +40,21 @@ function loadClient() {
   return captured;
 }
 
-/** 构造 mock React：useState 的首次调用可以注入自定义初始值 */
-function makeReact(injectFirstState) {
-  let count = 0;
+/**
+ * 构造 mock React。useState 的状态真的存在 cells 里，setter 会改它，
+ * 所以「点一下 → 重渲染 → 断言变化」这种交互也能测。
+ * injects 按 useState 的调用顺序注入初始值（用来喂不同面板的初始 view）。
+ */
+function makeReact(injects) {
+  var cells = [];
+  var cursor = 0;
   function Component(props) {
     this.props = props;
   }
   Component.prototype.setState = function (next) {
     Object.assign(this.state || {}, next);
   };
-  return {
+  var react = {
     Component: Component,
     Fragment: Symbol("Fragment"),
     createElement(type, props, ...children) {
@@ -58,9 +63,17 @@ function makeReact(injectFirstState) {
       return { type, props: props || {}, children };
     },
     useState(init) {
-      count += 1;
-      if (count === 1 && injectFirstState !== undefined) return [injectFirstState, () => {}];
-      return [typeof init === "function" ? init() : init, () => {}];
+      var i = cursor;
+      cursor += 1;
+      if (!(i in cells)) {
+        cells[i] = injects && i < injects.length ? injects[i] : typeof init === "function" ? init() : init;
+      }
+      return [
+        cells[i],
+        function (next) {
+          cells[i] = typeof next === "function" ? next(cells[i]) : next;
+        },
+      ];
     },
     useCallback(fn) {
       return fn;
@@ -71,6 +84,12 @@ function makeReact(injectFirstState) {
     },
     useRef(v) {
       return { current: v };
+    },
+  };
+  return {
+    react: react,
+    resetCursor() {
+      cursor = 0;
     },
   };
 }
@@ -99,16 +118,62 @@ function walk(node) {
   return walk(type(node.props));
 }
 
-function render(component, injectFirstState) {
+const KEY = { config: "ConfigPanel", patterns: "PatternPanel", state: "StatePanel", personas: "PersonaPanel" };
+
+/** 挂载一个面板：返回首棵渲染树 + 可反复调用的 rerender（状态会保留） */
+function mount(component, injects) {
   const spec = loadClient();
+  const box = makeReact(injects);
   const mod = spec.factory((name) => {
-    if (name === "react") return makeReact(injectFirstState);
+    if (name === "react") return box.react;
     throw new Error("未预期的依赖：" + name);
   });
-  const KEY = { config: "ConfigPanel", patterns: "PatternPanel", state: "StatePanel", personas: "PersonaPanel" };
   const Panel = mod.__components[KEY[component] || component];
   assert.ok(typeof Panel === "function", "拿不到组件 " + component);
-  return walk(Panel({}));
+  function rerender() {
+    box.resetCursor();
+    return walk(Panel({}));
+  }
+  return { tree: rerender(), rerender };
+}
+
+function render(component, injects) {
+  if (injects === undefined) return mount(component, undefined).tree;
+  // 单个对象 = 只注入第一个 useState；数组 = 按顺序注入多个
+  return mount(component, Array.isArray(injects) ? injects : [injects]).tree;
+}
+
+/** 深度找第一个满足条件的节点 */
+function find(node, pred) {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child, pred);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (pred(node)) return node;
+  for (const child of node.children || []) {
+    const hit = find(child, pred);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** 收集树里所有字符串，用来断言按钮/文案存在 */
+function texts(node, out = []) {
+  if (node === null || node === undefined) return out;
+  if (typeof node === "string" || typeof node === "number") {
+    out.push(String(node));
+    return out;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((c) => texts(c, out));
+    return out;
+  }
+  if (typeof node === "object") (node.children || []).forEach((c) => texts(c, out));
+  return out;
 }
 
 test("client: ConfigPanel 在无数据时能渲染", () => {
@@ -178,4 +243,59 @@ test("client: 状态面板在无数据/有数据时都能渲染", () => {
       },
     })
   );
+});
+
+/* ------------------------------------------------------------------ */
+/* Soul 面板：不提供切换、正文默认收起、导出在顶部                       */
+/* ------------------------------------------------------------------ */
+
+const PERSONA_VIEW = {
+  status: "ready",
+  active: "海拉",
+  cards: [{ name: "海拉", active: true }],
+  error: "",
+  notice: "",
+};
+const PERSONA_DRAFT = { name: "海拉", content: "# 海拉\n\n## Identity\n你是海拉。\n\n## Personality\n- 默认短\n" };
+
+test("Soul 面板: 不再提供人格切换", () => {
+  const tree = render("personas", [PERSONA_VIEW, PERSONA_DRAFT]);
+  // 注意：演化条目的「类别」还是个 select，所以不能按标签名断言，
+  // 要认那个下拉框的占位文案
+  assert.ok(
+    !texts(tree).some((t) => t.includes("选择 Soul 面板")),
+    "不该再有切换人格的下拉框"
+  );
+  const all = texts(tree);
+  assert.ok(!all.includes("设为激活"), "不该再有「设为激活」按钮");
+  assert.ok(!all.includes("停用"), "不该再有「停用」按钮");
+});
+
+test("Soul 面板: 导出按钮在顶部且可用", () => {
+  const tree = render("personas", [PERSONA_VIEW, PERSONA_DRAFT]);
+  const btn = find(tree, (n) => n.props && n.props.onClick && texts(n).includes("导出 .md"));
+  assert.ok(btn, "应该有「导出 .md」按钮");
+  assert.equal(btn.props.disabled, false, "有正文时导出不该是禁用的");
+});
+
+test("Soul 面板: 正文默认收起，点了才展开", () => {
+  const m = mount("personas", [PERSONA_VIEW, PERSONA_DRAFT]);
+  assert.equal(find(m.tree, (n) => n.type === "textarea"), null, "默认不该直接把 soul 全文摊在面板上");
+  assert.ok(texts(m.tree).includes("展开编辑"), "收起时应给出展开提示");
+
+  const head = find(m.tree, (n) => n.props && String(n.props.className || "").includes("__ds_foldHead"));
+  assert.ok(head, "应有可点的折叠标题行");
+  head.props.onClick();
+
+  const tree2 = m.rerender();
+  const box = find(tree2, (n) => n.type === "textarea");
+  assert.ok(box, "点击展开后应出现正文编辑区");
+  assert.equal(box.props.value, PERSONA_DRAFT.content, "展开后应是当前正文");
+  assert.ok(texts(tree2).includes("收起"), "展开后应能收起");
+});
+
+test("Soul 面板: 收起时给出篇幅摘要", () => {
+  const tree = render("personas", [PERSONA_VIEW, PERSONA_DRAFT]);
+  const all = texts(tree).join(" ");
+  assert.ok(/\d+ 行 · \d+ 字/.test(all), "收起态应显示行数与字数，不然不知道正文多大：" + all.slice(0, 120));
 });

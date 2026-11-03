@@ -228,8 +228,8 @@ Soul 是"静态骨架"，状态是"动态血肉"：Soul 面板负责「我是谁
 
 | 区块 | 内容 |
 |---|---|
-| 人格状态 | 五维数值 + 条形图 + 表达旋钮 + 最近 6 条事件，可手动刷新 |
-| Soul 面板 | 下拉选择 / 新建 / 编辑 / 保存 / 设为激活 / 停用 / 删除 / 导入 .md / 导出 .md |
+| 人格状态 | 五维数值 + 基线刻度 + 表达旋钮条形图 + 最近 6 条事件，可手动刷新 |
+| Soul 面板 | 只有当前这一个人格：新建 / 编辑 / 保存 / 删除 / 导入 .md / 导出 .md。正文默认收起，点标题展开 |
 | Evolved 条目 | 注入预算占用（X/4000 字）、条目列表（类别 · 有效权重 · 未注入标灰）、新增 / 删除、历史版本回滚 |
 | 升级 | 从本地源码同步到已安装副本（点完重启生效） |
 
@@ -244,7 +244,7 @@ Soul 是"静态骨架"，状态是"动态血肉"：Soul 面板负责「我是谁
 - `POST /dsh-soul-evolve/api/personas/rollback` — `{ name, index }` 回滚正文
 - `GET  /dsh-soul-evolve/api/trace?limit=<n>` — 观测记录
 - `PUT  /dsh-soul-evolve/api/personas` — `{ name, content }` 新建/覆盖
-- `PUT  /dsh-soul-evolve/api/personas/active` — `{ name }` 切换激活（null = 停用）
+- `PUT  /dsh-soul-evolve/api/personas/active` — `{ name }` 指定生效人格（null = 停用）。面板本身不提供切换入口，保存时自动指向当前卡片；保留此接口是给脚本和导入用的
 - `DELETE /dsh-soul-evolve/api/personas?name=<n>` — 删除
 - `POST /dsh-soul-evolve/api/upgrade` — 同步源码到已装副本
 
