@@ -309,6 +309,27 @@ test("sediment: 预览只读，不写卡也不记账", () => {
   }
 });
 
+test("sediment: dryRun 只演算，不写卡也不记账、不吃冷却", () => {
+  const dir = mkdtempSync(join(tmpdir(), "soul-dry-"));
+  const old = process.env.DSH_SOUL_HOME;
+  process.env.DSH_SOUL_HOME = dir;
+  try {
+    const turns = makeTurns({ days: 4, sessions: 4, perSession: 20 });
+    writeFileSync(join(dir, "turns.jsonl"), turns.map((t) => JSON.stringify(t)).join("\n") + "\n", "utf8");
+
+    const dry = sediment({ now: Date.now(), dryRun: true });
+    assert.ok(dry.wouldWrite.length > 0, "空跑要告诉调用方本来会写哪些");
+    assert.equal(dry.written.length, 0, "空跑不该写条目");
+    assert.equal(existsSync(patternsPath()), false, "空跑不该落 patterns.json 记账");
+
+    const real = sediment({ now: Date.now() });
+    assert.equal(real.written.length, 2, `空跑不该吃掉冷却，真跑仍应写两条，实际 ${real.written.length}`);
+  } finally {
+    if (old === undefined) delete process.env.DSH_SOUL_HOME;
+    else process.env.DSH_SOUL_HOME = old;
+  }
+});
+
 test("sediment: 两条轨道各写一条（互不挤占）", () => {
   const dir = mkdtempSync(join(tmpdir(), "soul-sed2-"));
   const old = process.env.DSH_SOUL_HOME;

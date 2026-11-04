@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.3 — 2026-11-04
+
+修一个「预演变真做」的接口 bug。
+
+- **`POST /api/patterns/sediment` 的 `dryRun` 没生效**：路由里硬编码了 `sediment({ now: Date.now() })`，请求体根本没读，所以 `{"dryRun": true}` 会照写不误。空跑（想先看看会写什么）变成了真写——而且真写会消耗当日冷却，下一次得等一天
+- 现在路由读 body 的 `dryRun` / `force` 并透传，回包里带 `dryRun` 与 `wouldWrite`，调用方能确认自己拿到的是演算结果还是写入结果
+- **新增 `test/api.test.js`**：直接调 `createHandler()` 造请求测路由层，3 例（dryRun 不写盘、缺 `x-soul-action` 返回 403、预览只读）。纯函数测试测不到这类问题——`sediment()` 内部的 dryRun 一直是对的，断在路由这一层；把修复回退后这一例会立刻变红（已反向验证）
+- 同时补了一条纯函数测试：`sediment({dryRun: true})` 返回 `wouldWrite`、不落 `patterns.json`、且不吃冷却
+
 ## 1.3.2 — 2026-11-03
 
 面板按实际用法收敛：一个人格、正文按需展开、导出挪到显眼处。

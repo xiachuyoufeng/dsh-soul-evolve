@@ -197,10 +197,16 @@ export function createHandler() {
       }
       if (path === `${PREFIX}/api/patterns/sediment` && req.method === "POST") {
         requireActionHeader(req);
-        const r = sediment({ now: Date.now() });
+        // 请求体里能带 dryRun / force。之前这里硬编码 sediment({ now })，body 根本没读，
+        // 于是 {"dryRun": true} 会照写不误——空跑成了真跑。
+        const body = await readJson(req);
+        const dryRun = body.dryRun === true;
+        const r = sediment({ now: Date.now(), dryRun, force: body.force === true });
         return send(res, 200, {
           ok: true,
+          dryRun,
           written: r.written,
+          wouldWrite: r.wouldWrite,
           skipped: r.skipped,
           ready: r.preview.ready,
           stats: r.preview.stats,
